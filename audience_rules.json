@@ -1,0 +1,15 @@
+{
+  "exact_match_required": true,
+  "proxy_requires_review": true,
+  "available_default_metrics": [
+    "A18+ weekly impressions",
+    "A18+ 4 week impressions"
+  ],
+  "allowed_proxies": {
+    "A18+": ["geopath_a18_weekly_impressions", "geopath_a18_4wk_impressions"],
+    "A25-54": ["geopath_a18_weekly_impressions"],
+    "A18-49": ["geopath_a18_weekly_impressions"],
+    "Hispanic A18+": [],
+    "Parents with children": []
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "vendor": "Bulletin Displays",
+  "illuminated": "Yes",
+  "default_install_cost": 850,
+  "install_cost_overrides": {
+    "01134": 1600,
+    "01134-SF": 1600
+  },
+  "default_production_cost": 750,
+  "production_cost_overrides": {
+    "01134": 950,
+    "01134-SF": 950
+  },
+  "is_production_forced": "No",
+  "taxes": 0
+}

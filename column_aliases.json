@@ -1,0 +1,289 @@
+{
+  "media_owner": [
+    "Vendor",
+    "Media Owner",
+    "Owner"
+  ],
+  "market": [
+    "Market",
+    "DMA",
+    "Designated Market Area"
+  ],
+  "city": [
+    "City",
+    "Town",
+    "Town "
+  ],
+  "state": [
+    "State"
+  ],
+  "media_type": [
+    "Media Type",
+    "Media Format",
+    "Format",
+    "Product",
+    "OOH Format",
+    "Environment"
+  ],
+  "digital_or_static": [
+    "Digital (Y/N)",
+    "Digital",
+    "Digital or Static"
+  ],
+  "number_of_units": [
+    "# of Units",
+    "# of Units ",
+    "Qty",
+    "Quantity",
+    "Number of Units"
+  ],
+  "geopath_frame_id": [
+    "Geopath Frame ID",
+    "GeoPath ID",
+    "GeoPath ID ",
+    "Geopath ID",
+    "TAB ID"
+  ],
+  "unit_id": [
+    "Unit #",
+    "Unit Number",
+    "Panel ID",
+    "Board #",
+    "Media Owner Unit #",
+    "Unit"
+  ],
+  "description": [
+    "Description",
+    "Location Description",
+    "Board Location",
+    "Location Details"
+  ],
+  "freeway_street": [
+    "Freeway/Street",
+    "Freeway",
+    "Street",
+    "Roadway"
+  ],
+  "location": [
+    "Location",
+    "Cross Streets",
+    "Location Address"
+  ],
+  "line": [
+    "Line",
+    "Line of Road",
+    "Side of Road",
+    "N/L",
+    "S/L",
+    "E/L",
+    "W/L"
+  ],
+  "facing": [
+    "Facing",
+    "Face",
+    "Direction"
+  ],
+  "reads": [
+    "Reads",
+    "Read",
+    "Read Type",
+    "LHR/RHR"
+  ],
+  "size": [
+    "Size",
+    "Dimensions",
+    "Size (H x W)",
+    "Size (H x W) "
+  ],
+  "availability": [
+    "Availability",
+    "Available Dates",
+    "Campaign Availability",
+    "Flight Dates"
+  ],
+  "status": [
+    "Status",
+    "Available?"
+  ],
+  "geopath_a18_weekly_impressions": [
+    "Geopath 18+ weekly impressions",
+    "A18+ Weekly Impressions",
+    "Weekly Impressions",
+    "Weekly Impressions 1",
+    " Weekly Impressions 1",
+    "Total 18+ Imps Weekly"
+  ],
+  "geopath_a18_4wk_impressions": [
+    "Geopath 18+ 4 week impressions",
+    "A18+ 4 Week Impressions",
+    "4 Week Impressions",
+    "Total 18+ Imps 4 Week"
+  ],
+  "a18_4wk_reach_percent": [
+    "A18+ 4-wk Reach (%)",
+    "A18+ 4-wk Reach (%) ",
+    "A18+4-wk Reach (%)",
+    "A18+ 4 Week Reach (%)",
+    "4-wk Reach (%)"
+  ],
+  "a18_4wk_freq": [
+    "A18+ 4-wk Freq (x)",
+    "A18+4-wk Freq (x)",
+    "A18+ 4 Week Freq (x)",
+    "4-wk Freq (x)",
+    "Frequency"
+  ],
+  "illuminated": [
+    "Illuminated",
+    "Illuminated?",
+    "Illuminated? (Y or N)",
+    "Illuminated?\n(Y or N)",
+    "Illuminated Y/N"
+  ],
+  "rate_card_4wk": [
+    "Rate Card",
+    "4 Week Rate Card",
+    "Gross Media Cost",
+    "Rate Card 4 Week"
+  ],
+  "negotiated_rate_4wk": [
+    "Negotiated Rate",
+    "Net Rate"
+  ],
+  "four_week_media_cost": [
+    "4 Week Media Cost",
+    "4 Week Net Media Cost",
+    "Net Media Cost",
+    "Media Cost"
+  ],
+  "contracted_media_cost": [
+    "Contracted Media Cost",
+    "Total Media Cost",
+    "Campaign Media Cost",
+    "Total Net Media"
+  ],
+  "install_cost_final": [
+    "Initial Installation Cost",
+    "Initial Installation Cost ",
+    "Installation Cost",
+    "Install Cost",
+    "Install",
+    "Installation",
+    "Posting"
+  ],
+  "production_cost_final": [
+    "Production Cost",
+    "Production",
+    "Print Production",
+    "Vinyl Production"
+  ],
+  "is_production_forced": [
+    "Is Production Forced",
+    "Is Production Forced ",
+    "Production Forced"
+  ],
+  "taxes": [
+    "Taxes",
+    "Tax"
+  ],
+  "target_location": [
+    "Target Location",
+    "Target Location ",
+    "Closest POI",
+    "Closest POI Name or Address",
+    "Store Covered"
+  ],
+  "distance_to_poi_miles": [
+    "Distance",
+    "Distance to Location",
+    "Distance to Location ",
+    "Distance to Store",
+    "Distance to POI",
+    "Approximate Distance",
+    "Distance To the Closest POI (miles)"
+  ],
+  "comments": [
+    "Comments",
+    "Notes",
+    "Rationale",
+    "Unit Highlights",
+    "Marketing Description"
+  ],
+  "pricing_note": [
+    "Pricing Notes",
+    "Rate Notes"
+  ],
+  "selection_reason": [
+    "Selection Reason",
+    "Rationale / Marketing Description",
+    "Why Selected"
+  ],
+  "review_flags": [
+    "Review Flags",
+    "Needs Review",
+    "Flags"
+  ],
+  "latitude": [
+    "Latitude (decimal)",
+    "Latitude",
+    "Lat"
+  ],
+  "longitude": [
+    "Longitude (decimal)",
+    "Longitude",
+    "Long",
+    "Lng"
+  ],
+  "spot_length_seconds": [
+    "Spot Length",
+    "Spot Length (Seconds)",
+    " Spot Length\n(Seconds)",
+    "Spot Length / # Spots per Loop or SOV"
+  ],
+  "spots_per_loop": [
+    "# of Spots Per Loop",
+    "# of ad spots in loop",
+    "Spots Per Loop"
+  ],
+  "qr_code_allowed": [
+    "Accepts QR Code in Creative? (Y/N)",
+    "Accepts QR Code",
+    "QR Code Accepted",
+    "QR Code Allowed"
+  ],
+  "target_audience_index": [
+    "Target Audience Index",
+    "Audience Index",
+    "Index"
+  ],
+  "reach_net": [
+    "Reach Net",
+    "Reach Net ",
+    "Reach"
+  ],
+  "target_in_market_rating_points": [
+    "Target In-Market Rating Points",
+    "TRP",
+    "In-Market Rating Points"
+  ],
+  "in_market_reach": [
+    "In- Market Reach",
+    "In- Market Reach ",
+    "In-Market Reach",
+    "Market Reach"
+  ],
+  "in_market_frequency": [
+    "In-Market Frequency",
+    "In-Market Frequency "
+  ],
+  "zip_code": [
+    "Zip Code",
+    "Zip",
+    "Postal Code"
+  ],
+  "total_campaign_cost": [
+    "Total Campaign Cost",
+    "Total Cost",
+    "Grand Total"
+  ]
+}

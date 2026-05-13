@@ -1,0 +1,14 @@
+{
+  "default_rate_basis": "4_weeks",
+  "default_cost_column": "negotiated_rate_4wk",
+  "fallback_cost_column": "rate_card_4wk",
+  "default_proration_rule": "round_up_to_full_week",
+  "default_increase_applies_to": "media_only",
+  "default_discount_applies_to": "media_only",
+  "apply_increase_before_discount": true,
+  "include_production_in_total": true,
+  "include_install_in_total": true,
+  "round_currency_to_nearest_dollar": true,
+  "default_cpm_impression_basis": "same_period_as_media_cost",
+  "allow_fallback_cost_column": false
+}
