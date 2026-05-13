@@ -7,19 +7,27 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.distance import add_distance_to_poi, get_primary_poi
-from src.grid_writer import write_output_workbook
-from src.inventory import normalize_inventory
-from src.matcher import match_units
-from src.pricing import add_pricing
-from src.requirements_extractor import coerce_requirements, default_requirements, extract_requirements, extract_text_from_pdf
+from distance import add_distance_to_poi, get_primary_poi
+from grid_writer import write_output_workbook
+from inventory import normalize_inventory
+from matcher import match_units
+from pricing import add_pricing
+from requirements_extractor import (
+    coerce_requirements,
+    default_requirements,
+    extract_requirements,
+    extract_text_from_pdf,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = BASE_DIR / "config"
 
 st.set_page_config(page_title="RFP Grid Agent", layout="wide")
 st.title("RFP Grid Agent")
-st.caption("Reads your master pricing workbook, matches boards to an RFP brief, calculates pricing, and exports a filled grid with audit tabs.")
+st.caption(
+    "Reads your master pricing workbook, matches boards to an RFP brief, "
+    "calculates pricing, and exports a filled grid with audit tabs."
+)
 
 with st.sidebar:
     st.header("Inputs")
@@ -33,19 +41,26 @@ with st.sidebar:
 
 st.subheader("Brief text")
 brief_text = ""
+
 if brief_file is not None:
     if brief_file.name.lower().endswith(".pdf"):
         brief_text = extract_text_from_pdf(io.BytesIO(brief_file.getvalue()))
     else:
         brief_text = brief_file.getvalue().decode("utf-8", errors="ignore")
+
 brief_text = st.text_area("Paste or edit RFP brief text", value=brief_text, height=180)
 
 st.subheader("Requirements JSON")
+
 if "requirements_json" not in st.session_state:
     st.session_state["requirements_json"] = json.dumps(default_requirements(), indent=2)
 
 if st.button("Extract requirements from brief"):
-    req = extract_requirements(brief_text, use_ollama=use_ollama, ollama_model=ollama_model)
+    req = extract_requirements(
+        brief_text,
+        use_ollama=use_ollama,
+        ollama_model=ollama_model,
+    )
     st.session_state["requirements_json"] = json.dumps(req, indent=2)
 
 requirements_json = st.text_area(
@@ -53,6 +68,7 @@ requirements_json = st.text_area(
     value=st.session_state["requirements_json"],
     height=360,
 )
+
 st.session_state["requirements_json"] = requirements_json
 
 if run_button:
@@ -68,11 +84,15 @@ if run_button:
 
     with st.spinner("Reading and normalizing inventory..."):
         master_bytes = io.BytesIO(master_file.getvalue())
-        load_result = normalize_inventory(master_bytes, column_aliases_path=CONFIG_DIR / "column_aliases.json")
+        load_result = normalize_inventory(
+            master_bytes,
+            column_aliases_path=CONFIG_DIR / "column_aliases.json",
+        )
         inventory = load_result.inventory
 
     with st.spinner("Calculating distances if POI lat/long is provided..."):
         poi = get_primary_poi(requirements)
+
         if poi:
             inventory = add_distance_to_poi(
                 inventory,
@@ -97,13 +117,32 @@ if run_button:
         selected, excluded = match_units(inventory, requirements)
 
     st.success(f"Selected {len(selected)} units. Excluded {len(excluded)} units.")
+
     if not selected.empty:
-        preview_cols = [c for c in [
-            "media_owner", "unit_id", "media_type", "city", "availability", "description", "score",
-            "four_week_media_cost", "install_cost_final", "production_cost_final", "taxes",
-            "distance_to_poi_miles", "contracted_media_cost", "total_campaign_cost", "cpm",
-            "selection_reason", "review_flags"
-        ] if c in selected.columns]
+        preview_cols = [
+            c
+            for c in [
+                "media_owner",
+                "unit_id",
+                "media_type",
+                "city",
+                "availability",
+                "description",
+                "score",
+                "four_week_media_cost",
+                "install_cost_final",
+                "production_cost_final",
+                "taxes",
+                "distance_to_poi_miles",
+                "contracted_media_cost",
+                "total_campaign_cost",
+                "cpm",
+                "selection_reason",
+                "review_flags",
+            ]
+            if c in selected.columns
+        ]
+
         st.dataframe(selected[preview_cols], use_container_width=True)
 
     with st.spinner("Writing output workbook..."):
@@ -111,8 +150,10 @@ if run_button:
             output_path = Path(tmp_out.name)
 
         template_path = None
+
         if template_file is not None:
             suffix = ".xlsm" if template_file.name.lower().endswith(".xlsm") else ".xlsx"
+
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_template:
                 tmp_template.write(template_file.getvalue())
                 template_path = Path(tmp_template.name)
@@ -136,3 +177,5 @@ if run_button:
 
     with st.expander("Missing fields report"):
         st.dataframe(load_result.missing_fields, use_container_width=True)
+
+    
