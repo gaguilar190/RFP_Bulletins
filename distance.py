@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from .utils import is_blank, safe_str, to_number
+from utils import is_blank, safe_str, to_number
 
 
 def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
