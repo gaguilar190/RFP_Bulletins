@@ -81,6 +81,18 @@ if run_button:
     except Exception as exc:
         st.error(f"Requirements JSON is invalid: {exc}")
         st.stop()
+        has_geography = bool(
+    requirements.get("markets")
+    or requirements.get("cities")
+    or requirements.get("poi_requirements")
+)
+
+if not has_geography:
+    st.error(
+        "No target geography was found. Please add markets, cities, or a POI before running. "
+        "This prevents the agent from selecting boards outside the requested location."
+    )
+    st.stop()
 
     with st.spinner("Reading and normalizing inventory..."):
         master_bytes = io.BytesIO(master_file.getvalue())
