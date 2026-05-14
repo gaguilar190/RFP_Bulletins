@@ -193,12 +193,11 @@ if run_button:
             column_aliases_path=CONFIG_DIR / "column_aliases.json",
         )
 
-    st.download_button(
-        "Download filled RFP workbook",
-        data=output_path.read_bytes(),
-        file_name="filled_rfp_grid.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+  output_filename = "filled_rfp_grid.xlsx"
 
-    with st.expander("Missing fields report"):
-        st.dataframe(load_result.missing_fields, use_container_width=True)
+st.download_button(
+    label="Download filled RFP workbook (.xlsx)",
+    data=output_path.read_bytes(),
+    file_name=output_filename,
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
