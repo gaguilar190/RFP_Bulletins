@@ -20,7 +20,7 @@ from requirements_extractor import (
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-CONFIG_DIR = BASE_DIR / "config"
+CONFIG_DIR = BASE_DIR
 
 st.set_page_config(page_title="RFP Grid Agent", layout="wide")
 st.title("RFP Grid Agent")
