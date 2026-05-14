@@ -1,4 +1,8 @@
 from __future__ import annotations
+import json
+import re
+import streamlit as st
+from groq import Groq
 
 import json
 import re
@@ -8,6 +12,100 @@ from typing import Any
 from dateutil.parser import parse as parse_date
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
+def extract_with_groq(brief_text: str, model: str = "llama-3.1-8b-instant") -> dict:
+    api_key = st.secrets.get("GROQ_API_KEY")
+
+    if not api_key:
+        req = default_requirements()
+        req["special_instructions"] = (
+            "Missing GROQ_API_KEY in Streamlit Secrets. Manual review required."
+        )
+        req["unclear_items"] = ["Missing GROQ_API_KEY"]
+        return req
+
+    client = Groq(api_key=api_key)
+
+    prompt = f"""
+You are extracting structured requirements for an out-of-home advertising RFP.
+
+Return ONLY valid JSON. No markdown. No comments.
+
+Use this exact schema:
+{{
+  "advertiser": "",
+  "campaign_name": "",
+  "campaign_start": null,
+  "campaign_end": null,
+  "markets": [],
+  "cities": [],
+  "media_types": [],
+  "target_audience": "A18+",
+  "poi_requirements": [],
+  "max_distance_miles": null,
+  "directional_keywords": [],
+  "pricing": {{
+    "pricing_basis": "contracted_period",
+    "rate_increase_percent": 0,
+    "increase_applies_to": "media_only",
+    "discount_percent": 0,
+    "costs_to_include": ["media", "production", "install"]
+  }},
+  "number_of_units": 25,
+  "required_output_columns": [],
+  "special_instructions": "",
+  "unclear_items": []
+}}
+
+Rules:
+- Extract all target geography from the brief.
+- Never leave markets and cities empty if the brief mentions locations.
+- If the brief says San Francisco or SF, include "San Francisco".
+- If the brief says Sacramento or Sacto, include "Sacramento".
+- If the brief says San Jose, include "San Jose".
+- If the brief says Santa Cruz, include "Santa Cruz".
+- If the brief says Monterey, include "Monterey".
+- If the brief says Pebble Beach, include "Pebble Beach".
+- If the brief mentions priority geography, include all priority locations.
+- Extract campaign dates in YYYY-MM-DD format.
+- Extract requested formats into media_types.
+- If partial flights are accepted, mention that in special_instructions.
+- Do not invent pricing, rates, impressions, or inventory.
+
+Brief:
+{brief_text}
+"""
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": "Return only valid JSON for the requested schema.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        temperature=0,
+    )
+
+    content = response.choices[0].message.content.strip()
+
+    # Remove accidental markdown fences if the model adds them.
+    content = re.sub(r"^```json\s*", "", content)
+    content = re.sub(r"^```\s*", "", content)
+    content = re.sub(r"\s*```$", "", content)
+
+    try:
+        return json.loads(content)
+    except Exception:
+        req = default_requirements()
+        req["special_instructions"] = (
+            "Groq returned invalid JSON. Manual review required."
+        )
+        req["unclear_items"] = [content[:1000]]
+        return req
 
 
 class PricingRequirement(BaseModel):
@@ -200,17 +298,34 @@ RFP brief:
 
 def extract_requirements(
     brief_text: str,
+    use_ai: bool = False,
+    groq_model: str = "llama-3.1-8b-instant",
     use_ollama: bool = False,
     ollama_model: str = "llama3.1:8b",
 ) -> dict[str, Any]:
     if not brief_text.strip():
         return default_requirements()
-    if not use_ollama:
-        return _heuristic_requirements(brief_text)
-    try:
-        return extract_requirements_with_ollama(brief_text, model=ollama_model)
-    except Exception as exc:
-        req = _heuristic_requirements(brief_text)
-        req["special_instructions"] = "Ollama extraction failed. Heuristic extraction was used; review before running."
-        req["unclear_items"] = req.get("unclear_items", []) + [str(exc)]
-        return coerce_requirements(req)
+
+    if use_ai:
+        try:
+            return coerce_requirements(extract_with_groq(brief_text, model=groq_model))
+        except Exception as exc:
+            req = _heuristic_requirements(brief_text)
+            req["special_instructions"] = (
+                "Groq extraction failed. Heuristic extraction was used; review before running."
+            )
+            req["unclear_items"] = req.get("unclear_items", []) + [str(exc)]
+            return coerce_requirements(req)
+
+    if use_ollama:
+        try:
+            return extract_requirements_with_ollama(brief_text, model=ollama_model)
+        except Exception as exc:
+            req = _heuristic_requirements(brief_text)
+            req["special_instructions"] = (
+                "Ollama extraction failed. Heuristic extraction was used; review before running."
+            )
+            req["unclear_items"] = req.get("unclear_items", []) + [str(exc)]
+            return coerce_requirements(req)
+
+    return coerce_requirements(_heuristic_requirements(brief_text))
