@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 from dateutil.parser import parse as parse_date
 
-from .utils import is_blank, load_json, safe_str, to_number
+from utils import is_blank, load_json, safe_str, to_number
 
 
 DEFAULT_BUSINESS_RULES = {
