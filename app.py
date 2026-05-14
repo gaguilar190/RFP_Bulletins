@@ -107,6 +107,7 @@ if run_button:
             "This prevents the agent from selecting boards outside the requested location."
         )
         st.stop()
+
     with st.spinner("Reading and normalizing inventory..."):
         master_bytes = io.BytesIO(master_file.getvalue())
         load_result = normalize_inventory(
@@ -193,11 +194,14 @@ if run_button:
             column_aliases_path=CONFIG_DIR / "column_aliases.json",
         )
 
-  output_filename = "filled_rfp_grid.xlsx"
+    output_filename = "filled_rfp_grid.xlsx"
 
-st.download_button(
-    label="Download filled RFP workbook (.xlsx)",
-    data=output_path.read_bytes(),
-    file_name=output_filename,
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+    st.download_button(
+        label="Download filled RFP workbook (.xlsx)",
+        data=output_path.read_bytes(),
+        file_name=output_filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    with st.expander("Missing fields report"):
+        st.dataframe(load_result.missing_fields, use_container_width=True)
