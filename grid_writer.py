@@ -1,172 +1,491 @@
 from __future__ import annotations
 
-import copy
+from copy import copy
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.worksheet import Worksheet
-from rapidfuzz import fuzz, process
-
-from utils import is_blank, load_json, normalize_key, safe_str
 
 
-DEFAULT_OUTPUT_FIELDS = [
-    "media_owner",
-    "market",
-    "city",
-    "state",
-    "media_type",
-    "number_of_units",
-    "geopath_frame_id",
-    "unit_id",
-    "description",
-    "facing",
-    "size",
-    "availability",
-    "geopath_a18_weekly_impressions",
-    "a18_4wk_reach_percent",
-    "a18_4wk_freq",
-    "illuminated",
-    "rate_card_4wk",
-    "four_week_media_cost",
-    "install_cost_final",
-    "production_cost_final",
-    "is_production_forced",
-    "taxes",
-    "target_location",
-    "distance_to_poi_miles",
-    "comments",
-    "latitude",
-    "longitude",
-    "spot_length_seconds",
-    "spots_per_loop",
-    "qr_code_allowed",
-    "contracted_media_cost",
-    "total_campaign_cost",
-    "cpm",
-    "selection_reason",
-    "review_flags",
-    "pricing_note",
-]
-
-FIELD_NUMBER_FORMATS = {
-    "a18_4wk_reach_percent": "0.00%",
-    "a18_4wk_freq": "0.00",
-    "rate_card_4wk": "\"$\"#,##0",
-    "four_week_media_cost": "\"$\"#,##0",
-    "contracted_media_cost": "\"$\"#,##0",
-    "total_campaign_cost": "\"$\"#,##0",
-    "install_cost_final": "\"$\"#,##0",
-    "production_cost_final": "\"$\"#,##0",
-    "taxes": "\"$\"#,##0",
-    "distance_to_poi_miles": "0.00",
-    "latitude": "0.00000",
-    "longitude": "0.00000",
-    "cpm": "\"$\"0.00",
-}
-
-
-def _flatten_aliases(column_aliases: dict[str, list[str]]) -> dict[str, str]:
-    alias_lookup = {}
-    for standard, aliases in column_aliases.items():
-        alias_lookup[normalize_key(standard)] = standard
-        for alias in aliases:
-            alias_lookup[normalize_key(alias)] = standard
-    return alias_lookup
-
-
-def _friendly_sheet_name(name: str) -> str:
-    bad_chars = ["[", "]", "*", "?", "/", "\\", ":"]
-    cleaned = name
-    for ch in bad_chars:
-        cleaned = cleaned.replace(ch, " ")
-    return cleaned[:31]
-
-
-def _safe_value(value: Any) -> Any:
-    if isinstance(value, (list, dict)):
-        import json
-        return json.dumps(value, ensure_ascii=False)
+def _safe_str(value: Any) -> str:
     if value is None:
-        return None
-    if not isinstance(value, str):
-        try:
-            if pd.isna(value):
-                return None
-        except Exception:
-            pass
-    return value
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    return str(value).strip()
 
 
-def find_header_row_and_mapping(
-    ws: Worksheet,
-    column_aliases: dict[str, list[str]],
-    max_scan_rows: int = 25,
-) -> tuple[int | None, dict[int, str], list[str]]:
-    alias_lookup = _flatten_aliases(column_aliases)
-    alias_keys = list(alias_lookup.keys())
-    best_row = None
+def _to_number(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            value = value.replace("$", "").replace(",", "").strip()
+            if value == "":
+                return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _format_date(value: Any) -> str:
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%-m/%-d/%y")
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text).strftime("%-m/%-d/%y")
+    except Exception:
+        return text
+
+
+def _campaign_date_range(requirements: dict[str, Any]) -> str:
+    start = _format_date(requirements.get("campaign_start"))
+    end = _format_date(requirements.get("campaign_end"))
+    if start and end:
+        return f"{start} - {end}"
+    return ""
+
+
+def _normalize_header(value: Any) -> str:
+    text = _safe_str(value).lower()
+    replacements = {
+        "#": " number ",
+        "+": " plus ",
+        "&": " and ",
+        "/": " ",
+        "-": " ",
+        "_": " ",
+        "(": " ",
+        ")": " ",
+        "%": " percent ",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return " ".join(text.split())
+
+
+def _first_existing(row: pd.Series, candidates: list[str], default: Any = "") -> Any:
+    for col in candidates:
+        if col in row.index:
+            val = row.get(col)
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                if str(val).strip() != "":
+                    return val
+    return default
+
+
+def _money(value: Any) -> float:
+    return round(_to_number(value, 0.0), 2)
+
+
+def _int_or_blank(value: Any) -> Any:
+    num = _to_number(value, None)
+    if num is None:
+        return ""
+    return int(round(num))
+
+
+def _get_unit_id(row: pd.Series) -> str:
+    return _safe_str(
+        _first_existing(
+            row,
+            ["unit_id", "unit", "vendor_inventory_number", "vendor_inventory", "panel_id"],
+        )
+    )
+
+
+def _is_special_unit_01134(row: pd.Series) -> bool:
+    unit_id = _get_unit_id(row).replace(" ", "").upper()
+    return unit_id in {"01134", "01134-SF", "1134", "1134-SF"}
+
+
+def _value_for_template_header(header: str, row: pd.Series, requirements: dict[str, Any]) -> Any:
+    h = _normalize_header(header)
+
+    campaign_start = _format_date(requirements.get("campaign_start"))
+    campaign_end = _format_date(requirements.get("campaign_end"))
+
+    # Fixed business rules
+    if h in {"vendor", "media owner"}:
+        return "Bulletin Displays"
+
+    if h in {"availability"}:
+        return _campaign_date_range(requirements)
+
+    if h in {"illumination", "illuminated"}:
+        return "Yes"
+
+    if h in {"forced vendor production y n", "is production forced", "forced vendor production"}:
+        return "No"
+
+    if h in {"taxes", "tax"}:
+        return 0
+
+    # Original RFP template fields
+    if h == "market":
+        return _first_existing(row, ["market", "city"], "")
+
+    if h == "client market name":
+        return _first_existing(row, ["market", "city"], "")
+
+    if h in {"format", "media type"}:
+        return _first_existing(row, ["media_type", "format"], "")
+
+    if h in {"vendor inventory number", "vendor inventory", "unit number", "unit"}:
+        return _get_unit_id(row)
+
+    if h in {"geopath id number", "geopath id", "geopath frame id"}:
+        return _first_existing(row, ["geopath_frame_id", "geopath_id"], "")
+
+    if h in {"location description", "description", "location"}:
+        return _first_existing(row, ["description", "location"], "")
+
+    if h in {"face", "facing"}:
+        return _first_existing(row, ["facing", "face"], "")
+
+    if h == "latitude":
+        return _first_existing(row, ["latitude"], "")
+
+    if h == "longitude":
+        return _first_existing(row, ["longitude"], "")
+
+    if h in {"size hxw", "size", "dimensions"}:
+        return _first_existing(row, ["size"], "")
+
+    if h in {"number of units", "of units"}:
+        return 1
+
+    if h in {"18 plus impressions cycle", "18 plus 4 week impressions", "a18 plus 4 wk impressions"}:
+        return _int_or_blank(
+            _first_existing(
+                row,
+                [
+                    "geopath_a18_4wk_impressions",
+                    "a18_4wk_impressions",
+                    "contracted_impressions",
+                ],
+                "",
+            )
+        )
+
+    if h in {"18 plus total impressions", "total impressions"}:
+        return _int_or_blank(
+            _first_existing(
+                row,
+                [
+                    "contracted_impressions",
+                    "geopath_a18_4wk_impressions",
+                    "a18_4wk_impressions",
+                ],
+                "",
+            )
+        )
+
+    if h in {"18 plus impressions week", "a18 plus weekly impressions", "weekly impressions"}:
+        return _int_or_blank(
+            _first_existing(
+                row,
+                [
+                    "geopath_a18_weekly_impressions",
+                    "a18_weekly_impressions",
+                    "weekly_impressions",
+                ],
+                "",
+            )
+        )
+
+    if h in {"rate card cycle", "rate card", "4 week rate card"}:
+        return _money(_first_existing(row, ["rate_card_4wk", "rate_card"], 0))
+
+    if h in {"net media cost cycle", "4 week media cost", "4 week net media cost"}:
+        return _money(
+            _first_existing(
+                row,
+                [
+                    "four_week_media_cost",
+                    "negotiated_rate_4wk",
+                    "negotiated_rate",
+                ],
+                0,
+            )
+        )
+
+    if h == "start date":
+        return campaign_start
+
+    if h == "end date":
+        return campaign_end
+
+    if h in {"number of cycles", "of cycles"}:
+        contracted_weeks = _to_number(_first_existing(row, ["contracted_weeks"], 0), 0)
+        if contracted_weeks:
+            return round(contracted_weeks / 4, 2)
+        return ""
+
+    if h == "cycle type":
+        return "4 Week"
+
+    if h in {"number of copy changes included at no cost after initial install", "of copy changes included at no cost after initial install"}:
+        return 0
+
+    if h in {"number of paid installs", "of paid installs"}:
+        return 1
+
+    if h == "total postings":
+        return 1
+
+    if h == "installation cost":
+        return 1600 if _is_special_unit_01134(row) else 850
+
+    if h == "print qty per posting":
+        return 1
+
+    if h in {"total to produce", "production cost"}:
+        return 950 if _is_special_unit_01134(row) else 750
+
+    if h == "forced vendor production cost":
+        return 0
+
+    if h == "production shipping address":
+        return ""
+
+    if h == "recommended material":
+        return ""
+
+    if h == "creative approval required":
+        return ""
+
+    if h == "creative due date":
+        return ""
+
+    if h == "production contact":
+        return ""
+
+    if h in {"number of spots", "of spots"}:
+        return _first_existing(row, ["number_of_spots", "spots"], "")
+
+    if h == "spot length":
+        return _first_existing(row, ["spot_length", "spot_length_seconds"], "")
+
+    if h == "net campaign media cost":
+        return _money(_first_existing(row, ["contracted_media_cost", "total_media_cost"], 0))
+
+    if h == "cancellation clause":
+        return ""
+
+    if h == "summary":
+        return _first_existing(row, ["selection_reason", "comments", "description"], "")
+
+    if h == "target area location":
+        return _first_existing(row, ["target_location"], "")
+
+    if h == "distance from target miles":
+        value = _first_existing(row, ["distance_to_poi_miles"], "")
+        if value == "":
+            return ""
+        return round(_to_number(value, 0), 2)
+
+    if h == "production rep name":
+        return ""
+
+    if h == "loop length seconds":
+        return _first_existing(row, ["loop_length_seconds"], "")
+
+    if h == "digital display type":
+        media_type = _safe_str(_first_existing(row, ["media_type"], ""))
+        if "digital" in media_type.lower():
+            return "Digital"
+        return ""
+
+    if h == "pixel size h x w":
+        return _first_existing(row, ["pixel_size", "pixel_size_hxw"], "")
+
+    if h == "popfacts persons 18 plus yrs 1wk total impressions":
+        return _int_or_blank(
+            _first_existing(
+                row,
+                [
+                    "geopath_a18_weekly_impressions",
+                    "a18_weekly_impressions",
+                    "weekly_impressions",
+                ],
+                "",
+            )
+        )
+
+    if h == "popfacts persons 18 plus yrs 1wk trp":
+        return _first_existing(row, ["popfacts_a18_1wk_trp", "trp"], "")
+
+    if h == "offer id":
+        return _first_existing(row, ["offer_id"], "")
+
+    # Business rule fields that may appear in other agency templates
+    if h in {"install cost", "installation cost final"}:
+        return 1600 if _is_special_unit_01134(row) else 850
+
+    if h in {"production cost final", "production cost"}:
+        return 950 if _is_special_unit_01134(row) else 750
+
+    if h in {"is production forced"}:
+        return "No"
+
+    # Fallback direct column match
+    for col in row.index:
+        if _normalize_header(col) == h:
+            return row.get(col)
+
+    return ""
+
+
+def _find_header_row(ws) -> int:
+    best_row = 1
     best_score = 0
-    best_mapping: dict[int, str] = {}
-    unmapped_headers: list[str] = []
 
-    for row_idx in range(1, min(max_scan_rows, ws.max_row) + 1):
-        mapping: dict[int, str] = {}
-        nonblank_headers: list[str] = []
-        for col_idx in range(1, ws.max_column + 1):
-            value = ws.cell(row_idx, col_idx).value
-            if is_blank(value):
-                continue
-            header = safe_str(value)
-            nonblank_headers.append(header)
-            key = normalize_key(header)
-            standard = alias_lookup.get(key)
-            if not standard and alias_keys:
-                match = process.extractOne(key, alias_keys, scorer=fuzz.ratio)
-                if match and match[1] >= 90:
-                    standard = alias_lookup[match[0]]
-            if standard:
-                mapping[col_idx] = standard
-        score = len(mapping)
+    expected_headers = {
+        "market",
+        "format",
+        "vendor inventory number",
+        "geopath id number",
+        "location description",
+        "latitude",
+        "longitude",
+        "rate card cycle",
+        "net media cost cycle",
+        "start date",
+        "end date",
+    }
+
+    max_scan = min(ws.max_row, 20)
+
+    for row_idx in range(1, max_scan + 1):
+        values = [_normalize_header(cell.value) for cell in ws[row_idx]]
+        score = sum(1 for value in values if value in expected_headers)
         if score > best_score:
             best_score = score
             best_row = row_idx
-            best_mapping = mapping
-            unmapped_headers = [h for h in nonblank_headers if normalize_key(h) not in alias_lookup]
 
-    if best_score == 0:
-        return None, {}, []
-    return best_row, best_mapping, unmapped_headers
+    return best_row
 
 
-def _write_dataframe(ws: Worksheet, df: pd.DataFrame, start_row: int = 1, start_col: int = 1) -> None:
-    for c_idx, col in enumerate(df.columns, start=start_col):
-        ws.cell(start_row, c_idx, str(col))
-    for r_offset, (_, row) in enumerate(df.iterrows(), start=1):
-        for c_idx, col in enumerate(df.columns, start=start_col):
-            cell = ws.cell(start_row + r_offset, c_idx, _safe_value(row[col]))
-            if col in FIELD_NUMBER_FORMATS:
-                cell.number_format = FIELD_NUMBER_FORMATS[col]
-    # Basic widths.
-    for c_idx, col in enumerate(df.columns, start=start_col):
-        values = [str(col)] + [safe_str(v) for v in df[col].head(50).tolist()]
-        width = min(max(len(v) for v in values) + 2, 45)
-        ws.column_dimensions[get_column_letter(c_idx)].width = width
-    ws.freeze_panes = ws.cell(start_row + 1, start_col)
+def _copy_row_style(ws, source_row: int, target_row: int) -> None:
+    for col_idx in range(1, ws.max_column + 1):
+        source = ws.cell(source_row, col_idx)
+        target = ws.cell(target_row, col_idx)
+
+        if source.has_style:
+            target._style = copy(source._style)
+        if source.number_format:
+            target.number_format = source.number_format
+        if source.alignment:
+            target.alignment = copy(source.alignment)
+        if source.border:
+            target.border = copy(source.border)
+        if source.fill:
+            target.fill = copy(source.fill)
+        if source.font:
+            target.font = copy(source.font)
 
 
-def _add_or_replace_sheet(wb: Workbook, name: str, df: pd.DataFrame) -> None:
-    sheet_name = _friendly_sheet_name(name)
+def _clear_template_body(ws, header_row: int, rows_to_clear: int) -> None:
+    start_row = header_row + 1
+    end_row = max(ws.max_row, start_row + rows_to_clear + 5)
+
+    for row_idx in range(start_row, end_row + 1):
+        for col_idx in range(1, ws.max_column + 1):
+            ws.cell(row_idx, col_idx).value = None
+
+
+def _write_selected_to_template(ws, selected: pd.DataFrame, requirements: dict[str, Any]) -> None:
+    header_row = _find_header_row(ws)
+    headers = [ws.cell(header_row, col_idx).value for col_idx in range(1, ws.max_column + 1)]
+    data_start_row = header_row + 1
+
+    _clear_template_body(ws, header_row, len(selected))
+
+    style_source_row = data_start_row
+
+    for df_idx, (_, selected_row) in enumerate(selected.iterrows()):
+        excel_row = data_start_row + df_idx
+
+        if excel_row != style_source_row:
+            _copy_row_style(ws, style_source_row, excel_row)
+
+        for col_idx, header in enumerate(headers, start=1):
+            if header is None or str(header).strip() == "":
+                continue
+
+            value = _value_for_template_header(str(header), selected_row, requirements)
+            ws.cell(excel_row, col_idx).value = value
+
+
+def _write_dataframe_sheet(wb, sheet_name: str, df: pd.DataFrame) -> None:
     if sheet_name in wb.sheetnames:
         del wb[sheet_name]
+
     ws = wb.create_sheet(sheet_name)
+
     if df is None or df.empty:
-        ws.cell(1, 1, "No rows")
-    else:
-        _write_dataframe(ws, df)
+        ws.cell(1, 1).value = "No records."
+        return
+
+    headers = list(df.columns)
+    ws.append(headers)
+
+    for _, row in df.iterrows():
+        ws.append([row.get(col) for col in headers])
+
+    for cell in ws[1]:
+        cell.font = copy(cell.font)
+        cell.font = cell.font.copy(bold=True)
+
+    ws.freeze_panes = "A2"
+
+    for col_cells in ws.columns:
+        max_len = 0
+        col_letter = col_cells[0].column_letter
+        for cell in col_cells[:100]:
+            max_len = max(max_len, len(str(cell.value or "")))
+        ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
+
+
+def _write_requirements_sheet(wb, requirements: dict[str, Any]) -> None:
+    if "Requirement Checklist" in wb.sheetnames:
+        del wb["Requirement Checklist"]
+
+    ws = wb.create_sheet("Requirement Checklist")
+    ws.cell(1, 1).value = "Requirement"
+    ws.cell(1, 2).value = "Value"
+
+    row_idx = 2
+    for key, value in requirements.items():
+        ws.cell(row_idx, 1).value = key
+        ws.cell(row_idx, 2).value = str(value)
+        row_idx += 1
+
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 80
+
+
+def _write_generic_output(wb, selected: pd.DataFrame) -> None:
+    ws = wb.active
+    ws.title = "Filled RFP Grid"
+
+    if selected.empty:
+        ws.cell(1, 1).value = "No selected units."
+        return
+
+    headers = list(selected.columns)
+    ws.append(headers)
+
+    for _, row in selected.iterrows():
+        ws.append([row.get(col) for col in headers])
+
+    ws.freeze_panes = "A2"
 
 
 def write_output_workbook(
@@ -176,83 +495,23 @@ def write_output_workbook(
     missing_fields: pd.DataFrame,
     output_path: str | Path,
     template_path: str | Path | None = None,
-    column_aliases_path: str | Path = "config/column_aliases.json",
-) -> Path:
-    column_aliases = load_json(column_aliases_path)
+    column_aliases_path: str | Path | None = None,
+) -> None:
     output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    unmapped_df = pd.DataFrame()
     if template_path:
-        wb = load_workbook(template_path)
-        ws = wb.active
-        header_row, col_mapping, unmapped_headers = find_header_row_and_mapping(ws, column_aliases)
-        if header_row and col_mapping:
-            data_start_row = header_row + 1
-            style_row = data_start_row
-            # Clear old rows in mapped columns under the header, without destroying the whole template.
-            for r in range(data_start_row, ws.max_row + 1):
-                for c in col_mapping:
-                    ws.cell(r, c).value = None
-
-            for r_offset, (_, unit) in enumerate(selected.iterrows()):
-                target_row = data_start_row + r_offset
-                for col_idx, standard_field in col_mapping.items():
-                    src = ws.cell(style_row, col_idx)
-                    dst = ws.cell(target_row, col_idx)
-                    if target_row != style_row:
-                        dst._style = copy.copy(src._style)
-                        if src.number_format:
-                            dst.number_format = src.number_format
-                        if src.alignment:
-                            dst.alignment = copy.copy(src.alignment)
-                    if standard_field in selected.columns:
-                        dst.value = _safe_value(unit.get(standard_field))
-                        if standard_field in FIELD_NUMBER_FORMATS:
-                            dst.number_format = FIELD_NUMBER_FORMATS[standard_field]
-            unmapped_df = pd.DataFrame({"unmapped_template_headers": unmapped_headers})
-        else:
-            # No recognizable grid headers, so create a new fill sheet.
-            ws = wb.create_sheet("Filled RFP Grid")
-            fields = [c for c in DEFAULT_OUTPUT_FIELDS if c in selected.columns]
-            _write_dataframe(ws, selected[fields])
-            unmapped_df = pd.DataFrame({"note": ["No recognizable header row found in uploaded template."]})
+        template_path = Path(template_path)
+        keep_vba = template_path.suffix.lower() == ".xlsm"
+        wb = load_workbook(template_path, keep_vba=keep_vba)
+        ws = wb[wb.sheetnames[0]]
+        _write_selected_to_template(ws, selected, requirements)
     else:
         wb = Workbook()
-        ws = wb.active
-        ws.title = "Filled RFP Grid"
-        fields = [c for c in DEFAULT_OUTPUT_FIELDS if c in selected.columns]
-        if not fields:
-            fields = list(selected.columns)
-        _write_dataframe(ws, selected[fields])
+        _write_generic_output(wb, selected)
 
-    # Audit sheets.
-    req_df = pd.DataFrame([requirements])
-    _add_or_replace_sheet(wb, "Requirement Checklist", req_df)
-
-    selected_review_cols = [c for c in [
-        "unit_id", "score", "selection_reason", "review_flags", "matched_requirements",
-        "distance_to_poi_miles", "contracted_media_cost", "total_campaign_cost", "cpm"
-    ] if c in selected.columns]
-    _add_or_replace_sheet(wb, "Selected Units Review", selected[selected_review_cols] if selected_review_cols else selected)
-
-    pricing_cols = [c for c in [
-        "unit_id", "availability", "four_week_media_cost", "base_4wk_rate", "cost_source",
-        "rate_increase_percent", "discount_percent", "adjusted_4wk_rate", "contracted_weeks",
-        "contracted_media_cost", "production_cost_final", "install_cost_final", "is_production_forced",
-        "taxes", "total_campaign_cost", "a18_4wk_reach_percent", "a18_4wk_freq",
-        "contracted_impressions", "cpm", "pricing_note", "pricing_review_flags"
-    ] if c in selected.columns]
-    _add_or_replace_sheet(wb, "Pricing Audit", selected[pricing_cols] if pricing_cols else pd.DataFrame())
-
-    distance_cols = [c for c in ["unit_id", "description", "latitude", "longitude", "distance_to_poi_miles", "distance_note"] if c in selected.columns]
-    _add_or_replace_sheet(wb, "Distance Audit", selected[distance_cols] if distance_cols else pd.DataFrame())
-
-    excluded_cols = [c for c in ["unit_id", "description", "city", "media_type", "excluded_reason"] if c in excluded.columns]
-    _add_or_replace_sheet(wb, "Excluded Units", excluded[excluded_cols].head(500) if excluded_cols else excluded.head(500))
-
-    _add_or_replace_sheet(wb, "Missing Fields Report", missing_fields)
-    _add_or_replace_sheet(wb, "Unmapped Columns", unmapped_df)
+    _write_requirements_sheet(wb, requirements)
+    _write_dataframe_sheet(wb, "Selected Units Review", selected)
+    _write_dataframe_sheet(wb, "Excluded Units", excluded)
+    _write_dataframe_sheet(wb, "Missing Fields Report", missing_fields)
 
     wb.save(output_path)
-    return output_path
