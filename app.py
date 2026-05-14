@@ -82,6 +82,19 @@ if run_button:
         st.error(f"Requirements JSON is invalid: {exc}")
         st.stop()
 
+    # If markets were extracted but cities were not, use markets as city/location filters too.
+    # This prevents San Francisco/Sacramento briefs from returning zero results just because cities is empty.
+    if requirements.get("markets") and not requirements.get("cities"):
+        requirements["cities"] = requirements["markets"]
+
+    # If the brief asks for bulletins generally, include both static and digital bulletin formats.
+    # This prevents the AI from narrowing the RFP to only Digital Bulletin.
+    brief_lower = brief_text.lower()
+    if "bulletins" in brief_lower or "bulletin" in brief_lower:
+        media_types = set(requirements.get("media_types") or [])
+        media_types.update(["Static Bulletin", "Digital Bulletin", "Bulletin"])
+        requirements["media_types"] = list(media_types)
+
     has_geography = bool(
         requirements.get("markets")
         or requirements.get("cities")
@@ -94,7 +107,6 @@ if run_button:
             "This prevents the agent from selecting boards outside the requested location."
         )
         st.stop()
-
     with st.spinner("Reading and normalizing inventory..."):
         master_bytes = io.BytesIO(master_file.getvalue())
         load_result = normalize_inventory(
