@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .utils import contains_any, safe_str, to_number
+from utils import contains_any, safe_str, to_number
 
 
 MARKET_CITY_HINTS = {
