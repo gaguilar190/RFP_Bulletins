@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from .utils import clean_header, is_blank, load_json, normalize_key, safe_str, to_number
+from utils import clean_header, is_blank, load_json, normalize_key, safe_str, to_number
 
 
 STANDARD_FIELDS = [
