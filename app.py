@@ -35,7 +35,7 @@ with st.sidebar:
     template_file = st.file_uploader("2. Optional blank agency grid", type=["xlsx", "xlsm"])
     brief_file = st.file_uploader("3. Optional RFP brief", type=["txt", "pdf"])
     use_ai = st.checkbox("Use free cloud AI to read brief", value=True)
-groq_model = st.text_input("Groq model", value="llama-3.1-8b-instant")
+    groq_model = st.text_input("Groq model", value="llama-3.1-8b-instant")
     st.divider()
     run_button = st.button("Run RFP Agent", type="primary")
 
@@ -58,8 +58,8 @@ if "requirements_json" not in st.session_state:
 if st.button("Extract requirements from brief"):
     req = extract_requirements(
         brief_text,
-        use_ollama=use_ollama,
-        ollama_model=ollama_model,
+        use_ai=use_ai,
+        groq_model=groq_model,
     )
     st.session_state["requirements_json"] = json.dumps(req, indent=2)
 
@@ -81,18 +81,19 @@ if run_button:
     except Exception as exc:
         st.error(f"Requirements JSON is invalid: {exc}")
         st.stop()
-        has_geography = bool(
-    requirements.get("markets")
-    or requirements.get("cities")
-    or requirements.get("poi_requirements")
-)
 
-if not has_geography:
-    st.error(
-        "No target geography was found. Please add markets, cities, or a POI before running. "
-        "This prevents the agent from selecting boards outside the requested location."
+    has_geography = bool(
+        requirements.get("markets")
+        or requirements.get("cities")
+        or requirements.get("poi_requirements")
     )
-    st.stop()
+
+    if not has_geography:
+        st.error(
+            "No target geography was found. Please add markets, cities, or a POI before running. "
+            "This prevents the agent from selecting boards outside the requested location."
+        )
+        st.stop()
 
     with st.spinner("Reading and normalizing inventory..."):
         master_bytes = io.BytesIO(master_file.getvalue())
@@ -189,5 +190,3 @@ if not has_geography:
 
     with st.expander("Missing fields report"):
         st.dataframe(load_result.missing_fields, use_container_width=True)
-
-    
