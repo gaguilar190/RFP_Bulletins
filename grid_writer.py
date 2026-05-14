@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from rapidfuzz import fuzz, process
 
-from .utils import is_blank, load_json, normalize_key, safe_str
+from utils import is_blank, load_json, normalize_key, safe_str
 
 
 DEFAULT_OUTPUT_FIELDS = [
