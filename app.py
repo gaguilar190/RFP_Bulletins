@@ -34,8 +34,8 @@ with st.sidebar:
     master_file = st.file_uploader("1. Upload master pricing workbook", type=["xlsx"])
     template_file = st.file_uploader("2. Optional blank agency grid", type=["xlsx", "xlsm"])
     brief_file = st.file_uploader("3. Optional RFP brief", type=["txt", "pdf"])
-    use_ollama = st.checkbox("Use local Ollama to read brief", value=False)
-    ollama_model = st.text_input("Ollama model", value="llama3.1:8b")
+    use_ai = st.checkbox("Use free cloud AI to read brief", value=True)
+groq_model = st.text_input("Groq model", value="llama-3.1-8b-instant")
     st.divider()
     run_button = st.button("Run RFP Agent", type="primary")
 
