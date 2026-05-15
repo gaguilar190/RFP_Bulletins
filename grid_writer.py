@@ -8,6 +8,349 @@ from typing import Any
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 
+try:
+    from rapidfuzz import fuzz, process
+except Exception:
+    fuzz = None
+    process = None
+
+
+# -------------------------------------------------------------------
+# Standard field aliases
+# -------------------------------------------------------------------
+
+COLUMN_ALIASES: dict[str, list[str]] = {
+    "hold_status": [
+        "hold avail status",
+        "hold / avail status",
+        "hold status",
+        "avail status",
+        "availability status",
+        "status",
+    ],
+    "market": [
+        "market",
+        "dma",
+        "client market name",
+        "client market",
+        "market name",
+    ],
+    "vendor": [
+        "vendor",
+        "media owner",
+        "owner",
+        "supplier",
+        "vendor name",
+    ],
+    "media_type": [
+        "format",
+        "media type",
+        "unit type",
+        "product",
+        "inventory type",
+        "type",
+    ],
+    "unit_quantity": [
+        "unit quantity",
+        "unit qty",
+        "quantity",
+        "# of units",
+        "number of units",
+        "of units",
+    ],
+    "unit_id": [
+        "unit",
+        "unit #",
+        "unit number",
+        "vendor inventory #",
+        "vendor inventory number",
+        "vendor inventory",
+        "inventory id",
+        "panel id",
+        "tab id",
+    ],
+    "geopath_id": [
+        "geopath id",
+        "geopath id #",
+        "geopath id number",
+        "geopath frame id",
+        "frame id",
+    ],
+    "location_description": [
+        "location description",
+        "location",
+        "description",
+        "location details",
+        "location desc",
+    ],
+    "face": [
+        "face",
+        "facing",
+        "read",
+        "orientation",
+    ],
+    "latitude": [
+        "latitude",
+        "lat",
+    ],
+    "longitude": [
+        "longitude",
+        "long",
+        "lon",
+        "lng",
+    ],
+    "zip_code": [
+        "zip",
+        "zip code",
+        "zipcode",
+        "postal code",
+    ],
+    "size": [
+        "size",
+        "size hxw",
+        "size h x w",
+        "dimensions",
+        "unit size",
+    ],
+    "digital_spot_length": [
+        "digital spot length",
+        "spot length",
+        "spot length seconds",
+    ],
+    "spots_per_loop": [
+        "# of spots per loop",
+        "number of spots per loop",
+        "spots per loop",
+        "number of spots",
+        "# of spots",
+        "spots",
+    ],
+    "loop_length": [
+        "loop length",
+        "loop length seconds",
+    ],
+    "digital_display_type": [
+        "digital display type",
+        "display type",
+    ],
+    "pixel_size": [
+        "pixel size",
+        "pixel size h x w",
+        "pixel size hxw",
+        "resolution",
+    ],
+    "weekly_impressions": [
+        "1 week a18+ geopath impressions",
+        "1 week a18 geopath impressions",
+        "a18+ impressions/week",
+        "18+ impressions/week",
+        "18 plus impressions week",
+        "weekly impressions",
+        "a18 weekly impressions",
+        "popfacts persons 18 plus yrs 1wk total impressions",
+    ],
+    "four_week_impressions": [
+        "4 week a18+ geopath impressions",
+        "4 week a18 geopath impressions",
+        "a18+ 4-wk impressions",
+        "a18+ 4 wk impressions",
+        "18+ impressions/cycle",
+        "18 plus impressions cycle",
+        "18 plus 4 week impressions",
+        "4 week impressions",
+    ],
+    "total_impressions": [
+        "18+ total impressions",
+        "18 plus total impressions",
+        "total impressions",
+        "a18 total impressions",
+    ],
+    "start_date": [
+        "start date",
+        "start",
+        "flight start",
+        "posting start",
+    ],
+    "end_date": [
+        "end date",
+        "end",
+        "flight end",
+        "posting end",
+    ],
+    "cycle_duration": [
+        "cycle duration",
+        "cycle type",
+        "period type",
+    ],
+    "number_of_cycles": [
+        "number of cycles",
+        "# of cycles",
+        "cycles",
+        "number of 4 wk periods",
+        "# of 4 wk periods",
+        "number of 4 week periods",
+        "# of 4 week periods",
+    ],
+    "rate_card": [
+        "rate card",
+        "4 week rate card",
+        "4wk rate card net cost",
+        "4 week rate card net cost",
+        "rate card/cycle",
+        "rate card cycle",
+    ],
+    "four_week_rate": [
+        "4 week rate",
+        "4wk proposed net cost",
+        "4 week proposed net cost",
+        "4wk negotiated net cost",
+        "4 week negotiated net cost",
+        "4 week media cost",
+        "4 week net media cost",
+        "net media cost/cycle",
+        "net media cost cycle",
+        "net media cost",
+        "proposed net cost",
+        "negotiated net cost",
+    ],
+    "total_media_cost": [
+        "total media net cost",
+        "net campaign media cost",
+        "total spaces cost net",
+        "total media cost",
+        "media total",
+    ],
+    "install_cost": [
+        "installation cost",
+        "install cost",
+        "initial installation cost",
+        "initial installation cost net",
+        "initial install cost",
+        "installation cost final",
+    ],
+    "production_cost": [
+        "production cost",
+        "production cost net",
+        "production cost vendor forced",
+        "production cost final",
+        "total to produce",
+        "print production",
+    ],
+    "total_client_cost": [
+        "total client net",
+        "total client net includes media prod install fee",
+        "total media install production net",
+        "total campaign cost",
+        "grand total",
+        "total net cost",
+    ],
+    "cpm": [
+        "cpm",
+        "net cpm",
+    ],
+    "illuminated": [
+        "illuminated",
+        "illuminated?",
+        "illuminated y/n",
+        "illumination",
+        "lighting",
+        "lit",
+    ],
+    "production_forced": [
+        "forced vendor production y/n",
+        "forced vendor production",
+        "is production forced",
+        "production forced",
+        "vendor forced production",
+    ],
+    "forced_vendor_production_cost": [
+        "forced vendor production cost",
+        "vendor forced production cost",
+    ],
+    "copy_changes": [
+        "# of copy changes included at no cost after initial install",
+        "number of copy changes included at no cost after initial install",
+        "copy changes included",
+    ],
+    "paid_installs": [
+        "# of paid installs",
+        "number of paid installs",
+        "paid installs",
+    ],
+    "total_postings": [
+        "total postings",
+        "postings",
+    ],
+    "print_qty": [
+        "print qty per posting",
+        "print quantity per posting",
+        "print qty",
+    ],
+    "production_shipping_address": [
+        "production shipping address",
+        "shipping address",
+        "ship to",
+    ],
+    "recommended_material": [
+        "recommended material",
+        "material",
+    ],
+    "creative_approval_required": [
+        "creative approval required",
+        "creative approval required y/n",
+    ],
+    "creative_due_date": [
+        "creative due date",
+        "creative due to vendor for approval",
+        "creative asset due",
+        "creative asset due to vendor",
+        "creative asset due to vendor drop dead date for monday posting",
+    ],
+    "production_contact": [
+        "production contact",
+        "production contact name",
+        "vendor contact name & phone #",
+        "vendor contact",
+    ],
+    "target_area_location": [
+        "target area location",
+        "store covered",
+        "poi",
+        "target location",
+    ],
+    "distance_to_poi": [
+        "approximate distance",
+        "approximate distance mi",
+        "approximate distance (mi)",
+        "distance from target",
+        "distance from target miles",
+        "distance to poi",
+        "distance to poi miles",
+    ],
+    "notes": [
+        "notes",
+        "comments",
+        "comment",
+        "remarks",
+        "pricing comments",
+        "pricing grid comments",
+    ],
+    "offer_id": [
+        "offer id",
+        "proposal id",
+    ],
+}
+
+
+_ALIAS_LOOKUP: dict[str, str] = {}
+for _standard_field, _aliases in COLUMN_ALIASES.items():
+    for _alias in _aliases:
+        _ALIAS_LOOKUP[" ".join(_alias.lower().split())] = _standard_field
+
+
+# -------------------------------------------------------------------
+# Basic helpers
+# -------------------------------------------------------------------
 
 def _safe_str(value: Any) -> str:
     if value is None:
@@ -52,11 +395,13 @@ def _campaign_date_range(requirements: dict[str, Any]) -> str:
 
 def _normalize_header(value: Any) -> str:
     text = _safe_str(value).lower()
+
     replacements = {
         "#": " number ",
         "+": " plus ",
         "&": " and ",
         "/": " ",
+        "\\": " ",
         "-": " ",
         "_": " ",
         "(": " ",
@@ -65,9 +410,15 @@ def _normalize_header(value: Any) -> str:
         "?": " ",
         ".": " ",
         ",": " ",
+        ":": " ",
+        ";": " ",
+        "\n": " ",
+        "\r": " ",
     }
+
     for old, new in replacements.items():
         text = text.replace(old, new)
+
     return " ".join(text.split())
 
 
@@ -96,7 +447,14 @@ def _get_unit_id(row: pd.Series) -> str:
     return _safe_str(
         _first_existing(
             row,
-            ["unit_id", "unit", "vendor_inventory_number", "vendor_inventory", "panel_id"],
+            [
+                "unit_id",
+                "unit",
+                "unit_number",
+                "vendor_inventory_number",
+                "vendor_inventory",
+                "panel_id",
+            ],
         )
     )
 
@@ -138,94 +496,153 @@ def _contracted_periods(row: pd.Series) -> Any:
     return ""
 
 
-def _value_for_template_header(header: str, row: pd.Series, requirements: dict[str, Any]) -> Any:
-    h = _normalize_header(header)
+# -------------------------------------------------------------------
+# Header resolver
+# -------------------------------------------------------------------
 
+def _build_alias_lookup() -> dict[str, str]:
+    lookup: dict[str, str] = {}
+
+    for standard_field, aliases in COLUMN_ALIASES.items():
+        lookup[_normalize_header(standard_field)] = standard_field
+        for alias in aliases:
+            lookup[_normalize_header(alias)] = standard_field
+
+    return lookup
+
+
+def _resolve_template_field(header: Any) -> str | None:
+    """
+    Converts a template header into a standard internal field name.
+
+    Example:
+    - "Illuminated?"
+    - "Illuminated (Y/N)"
+    - "Illumination"
+
+    all resolve to:
+    - "illuminated"
+    """
+    normalized = _normalize_header(header)
+    if not normalized:
+        return None
+
+    alias_lookup = _build_alias_lookup()
+
+    # Exact match first.
+    if normalized in alias_lookup:
+        return alias_lookup[normalized]
+
+    # Containment match second.
+    for alias, standard_field in alias_lookup.items():
+        if alias and (alias in normalized or normalized in alias):
+            if len(alias) >= 4 and len(normalized) >= 4:
+                return standard_field
+
+    # Fuzzy match third.
+    if process is not None and fuzz is not None:
+        choices = list(alias_lookup.keys())
+        match = process.extractOne(normalized, choices, scorer=fuzz.token_sort_ratio)
+
+        if match:
+            matched_alias, score, _ = match
+            if score >= 82:
+                return alias_lookup[matched_alias]
+
+    return None
+
+
+def _get_value_for_standard_field(
+    field: str | None,
+    header: str,
+    row: pd.Series,
+    requirements: dict[str, Any],
+) -> Any:
     campaign_start = _format_date(requirements.get("campaign_start"))
     campaign_end = _format_date(requirements.get("campaign_end"))
 
-    # Fixed business rules
-    if h in {"vendor", "media owner"}:
+    if field is None:
+        # Last fallback: exact normalized match to a row column.
+        h = _normalize_header(header)
+        for col in row.index:
+            if _normalize_header(col) == h:
+                return row.get(col)
+        return ""
+
+    # Fixed / business rule fields
+    if field == "hold_status":
+        return "Available"
+
+    if field == "vendor":
         return "Bulletin Displays"
 
-    if h in {"availability"}:
+    if field == "availability":
         return _campaign_date_range(requirements)
 
-    if h in {"illumination", "illuminated", "illuminated"}:
+    if field == "illuminated":
         return "Yes"
 
-    if h in {
-        "forced vendor production y n",
-        "is production forced",
-        "forced vendor production",
-        "production forced",
-    }:
+    if field == "production_forced":
         return "No"
 
-    if h in {"taxes", "tax"}:
+    if field == "taxes":
         return 0
 
-    # Common RFP template fields
-    if h in {"dma", "market", "client market name"}:
+    # Common location and unit fields
+    if field == "market":
         return _first_existing(row, ["market", "city"], "")
 
-    if h in {"format", "media type"}:
+    if field == "media_type":
         return _first_existing(row, ["media_type", "format"], "")
 
-    if h in {"vendor inventory number", "vendor inventory", "unit number", "unit"}:
-        return _get_unit_id(row)
-
-    if h in {"geopath id number", "geopath id", "geopath frame id"}:
-        return _first_existing(row, ["geopath_frame_id", "geopath_id"], "")
-
-    if h in {"location description", "description", "location"}:
-        return _first_existing(row, ["description", "location"], "")
-
-    if h in {"face", "facing"}:
-        return _first_existing(row, ["facing", "face"], "")
-
-    if h == "latitude":
-        return _first_existing(row, ["latitude"], "")
-
-    if h == "longitude":
-        return _first_existing(row, ["longitude"], "")
-
-    if h in {"zip code", "zipcode", "zip"}:
-        return _first_existing(row, ["zip_code", "zipcode", "zip"], "")
-
-    if h in {"size hxw", "size", "dimensions"}:
-        return _first_existing(row, ["size"], "")
-
-    if h in {"number of units", "of units"}:
+    if field == "unit_quantity":
         return 1
 
+    if field == "unit_id":
+        return _get_unit_id(row)
+
+    if field == "geopath_id":
+        return _first_existing(row, ["geopath_frame_id", "geopath_id"], "")
+
+    if field == "location_description":
+        return _first_existing(row, ["description", "location"], "")
+
+    if field == "face":
+        return _first_existing(row, ["facing", "face"], "")
+
+    if field == "latitude":
+        return _first_existing(row, ["latitude"], "")
+
+    if field == "longitude":
+        return _first_existing(row, ["longitude"], "")
+
+    if field == "zip_code":
+        return _first_existing(row, ["zip_code", "zipcode", "zip"], "")
+
+    if field == "size":
+        return _first_existing(row, ["size"], "")
+
     # Digital fields
-    if h in {"digital spot length", "spot length"}:
+    if field == "digital_spot_length":
         return _first_existing(row, ["spot_length", "spot_length_seconds"], "")
 
-    if h in {"number of spots per loop", "of spots per loop", "spots per loop"}:
+    if field == "spots_per_loop":
         return _first_existing(row, ["spots_per_loop", "number_of_spots", "spots"], "")
 
-    if h == "loop length seconds":
+    if field == "loop_length":
         return _first_existing(row, ["loop_length_seconds"], "")
 
-    if h == "digital display type":
+    if field == "digital_display_type":
         media_type = _safe_str(_first_existing(row, ["media_type"], ""))
         if "digital" in media_type.lower():
             return "Digital"
         return ""
 
-    if h == "pixel size h x w":
+    if field == "pixel_size":
         return _first_existing(row, ["pixel_size", "pixel_size_hxw"], "")
 
     # Impressions
-    if h in {
-        "1 week a18 plus geopath impressions",
-        "1 week a18 geopath impressions",
-        "18 plus impressions week",
-        "a18 plus weekly impressions",
-        "weekly impressions",
-    }:
+    if field == "weekly_impressions":
         return _int_or_blank(
             _first_existing(
                 row,
@@ -238,13 +655,7 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
             )
         )
 
-    if h in {
-        "4 week a18 plus geopath impressions",
-        "4 week a18 geopath impressions",
-        "18 plus impressions cycle",
-        "18 plus 4 week impressions",
-        "a18 plus 4 wk impressions",
-    }:
+    if field == "four_week_impressions":
         return _int_or_blank(
             _first_existing(
                 row,
@@ -257,7 +668,7 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
             )
         )
 
-    if h in {"18 plus total impressions", "total impressions"}:
+    if field == "total_impressions":
         return _int_or_blank(
             _first_existing(
                 row,
@@ -271,23 +682,23 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
         )
 
     # Dates
-    if h == "start date":
+    if field == "start_date":
         return campaign_start
 
-    if h == "end date":
+    if field == "end_date":
         return campaign_end
 
+    if field == "cycle_duration":
+        return "4 Week"
+
+    if field == "number_of_cycles":
+        return _contracted_periods(row)
+
     # Pricing
-    if h in {"4 week rate card", "rate card cycle", "rate card"}:
+    if field == "rate_card":
         return _money(_first_existing(row, ["rate_card_4wk", "rate_card"], 0))
 
-    # Your rule: 4 week media cost should always be negotiated rate
-    if h in {
-        "4 week rate",
-        "4 week media cost",
-        "4 week net media cost",
-        "net media cost cycle",
-    }:
+    if field == "four_week_rate":
         return _money(
             _first_existing(
                 row,
@@ -300,150 +711,135 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
             )
         )
 
-    if h in {"number of 4 wk periods", "number of 4 week periods", "number of cycles", "of cycles"}:
-        return _contracted_periods(row)
-
-    if h == "cycle type":
-        return "4 Week"
-
-    if h in {"total spaces cost net", "net campaign media cost"}:
+    if field == "total_media_cost":
         return _money(_first_existing(row, ["contracted_media_cost", "total_media_cost"], 0))
 
-    if h in {"total media install production net", "total campaign cost"}:
+    if field == "install_cost":
+        return _install_cost(row)
+
+    if field == "production_cost":
+        return _production_cost(row)
+
+    if field == "total_client_cost":
         total = _to_number(_first_existing(row, ["contracted_media_cost", "total_media_cost"], 0), 0)
         total += _install_cost(row)
         total += _production_cost(row)
         return _money(total)
 
-    if h == "cpm":
+    if field == "cpm":
         return _money(_first_existing(row, ["cpm"], 0))
 
-    # Install and production rules
-    if h in {
-        "installation cost",
-        "install cost",
-        "initial installation cost net",
-        "installation cost final",
-        "initial install cost",
-    }:
-        return _install_cost(row)
-
-    if h in {
-        "production cost",
-        "production cost net",
-        "production cost final",
-        "total to produce",
-    }:
-        return _production_cost(row)
-
-    if h == "forced vendor production cost":
+    # Production/admin fields
+    if field == "forced_vendor_production_cost":
         return 0
 
-    # Other production fields
-    if h in {
-        "number of copy changes included at no cost after initial install",
-        "of copy changes included at no cost after initial install",
-    }:
+    if field == "copy_changes":
         return 0
 
-    if h in {"number of paid installs", "of paid installs"}:
+    if field == "paid_installs":
         return 1
 
-    if h == "total postings":
+    if field == "total_postings":
         return 1
 
-    if h == "print qty per posting":
+    if field == "print_qty":
         return 1
 
-    if h == "production shipping address":
+    if field in {
+        "production_shipping_address",
+        "recommended_material",
+        "creative_approval_required",
+        "creative_due_date",
+        "production_contact",
+    }:
         return ""
 
-    if h == "recommended material":
-        return ""
-
-    if h == "creative approval required":
-        return ""
-
-    if h == "creative due date":
-        return ""
-
-    if h == "production contact":
-        return ""
-
-    if h == "production rep name":
-        return ""
-
-    # Target/location/distance fields
-    if h in {"store covered", "target area location"}:
+    # Target/location/distance
+    if field == "target_area_location":
         return _first_existing(row, ["target_location"], _target_location_from_requirements(requirements))
 
-    if h in {"approximate distance mi", "distance from target miles", "distance to poi miles"}:
+    if field == "distance_to_poi":
         value = _first_existing(row, ["distance_to_poi_miles"], "")
         if value == "":
             return ""
         return round(_to_number(value, 0), 2)
 
-    # Notes
-    if h in {"notes", "comments", "comment", "summary"}:
+    # Notes should only use pricing-grid comments/notes, not AI scoring explanation.
+    if field == "notes":
         return _first_existing(
             row,
-            ["selection_reason", "review_flags", "comments", "description"],
+            [
+                "comments",
+                "comment",
+                "notes",
+                "pricing_grid_comments",
+                "pricing_comments",
+            ],
             "",
         )
 
-    # Misc fields
-    if h == "popfacts persons 18 plus yrs 1wk total impressions":
-        return _int_or_blank(
-            _first_existing(
-                row,
-                [
-                    "geopath_a18_weekly_impressions",
-                    "a18_weekly_impressions",
-                    "weekly_impressions",
-                ],
-                "",
-            )
-        )
-
-    if h == "popfacts persons 18 plus yrs 1wk trp":
-        return _first_existing(row, ["popfacts_a18_1wk_trp", "trp"], "")
-
-    if h == "offer id":
+    if field == "offer_id":
         return _first_existing(row, ["offer_id"], "")
-
-    # Fallback direct column match
-    for col in row.index:
-        if _normalize_header(col) == h:
-            return row.get(col)
 
     return ""
 
 
+def _value_for_template_header(header: str, row: pd.Series, requirements: dict[str, Any]) -> Any:
+    field = _resolve_template_field(header)
+    return _get_value_for_standard_field(field, header, row, requirements)
+
+
+# -------------------------------------------------------------------
+# Workbook/template writing
+# -------------------------------------------------------------------
+
 def _find_header_row(ws) -> int:
+    """
+    Finds the real field header row by seeing how many columns can be mapped
+    to known standard fields. This is much more durable than checking exact
+    wording only.
+    """
     best_row = 1
     best_score = 0
 
-    expected_headers = {
-        "dma",
-        "vendor",
-        "media type",
-        "unit",
-        "geopath id",
-        "location description",
-        "latitude",
-        "longitude",
-        "4 week rate card",
-        "4 week rate",
-        "initial installation cost net",
-        "production cost net",
-        "notes",
-    }
-
-    max_scan = min(ws.max_row, 20)
+    max_scan = min(ws.max_row, 30)
 
     for row_idx in range(1, max_scan + 1):
-        values = [_normalize_header(cell.value) for cell in ws[row_idx]]
-        score = sum(1 for value in values if value in expected_headers)
+        fields_found = []
+        raw_values = []
+
+        for cell in ws[row_idx]:
+            raw_value = _safe_str(cell.value)
+            if not raw_value:
+                continue
+
+            raw_values.append(raw_value)
+            field = _resolve_template_field(raw_value)
+
+            if field:
+                fields_found.append(field)
+
+        unique_fields = set(fields_found)
+        score = len(unique_fields)
+
+        # Header rows typically have several operational fields.
+        if {"vendor", "unit_id", "media_type"} & unique_fields:
+            score += 2
+
+        if {"location_description", "market"} & unique_fields:
+            score += 2
+
+        if {"four_week_rate", "rate_card", "total_media_cost"} & unique_fields:
+            score += 2
+
+        if {"install_cost", "production_cost", "total_client_cost"} & unique_fields:
+            score += 2
+
+        # Avoid choosing category rows like "HOLDS" or "PRODUCTION".
+        joined = _normalize_header(" ".join(raw_values))
+        if joined in {"holds", "production"}:
+            score -= 5
+
         if score > best_score:
             best_score = score
             best_row = row_idx
@@ -481,8 +877,12 @@ def _clear_template_body(ws, header_row: int, rows_to_clear: int) -> None:
 
 def _write_selected_to_template(ws, selected: pd.DataFrame, requirements: dict[str, Any]) -> None:
     header_row = _find_header_row(ws)
-    headers = [ws.cell(header_row, col_idx).value for col_idx in range(1, ws.max_column + 1)]
     data_start_row = header_row + 1
+
+    headers = [
+        ws.cell(header_row, col_idx).value
+        for col_idx in range(1, ws.max_column + 1)
+    ]
 
     _clear_template_body(ws, header_row, len(selected))
 
@@ -500,6 +900,9 @@ def _write_selected_to_template(ws, selected: pd.DataFrame, requirements: dict[s
 
             value = _value_for_template_header(str(header), selected_row, requirements)
             ws.cell(excel_row, col_idx).value = value
+
+    if selected.empty:
+        ws.cell(data_start_row, 1).value = "No selected units."
 
 
 def _write_generic_output(wb, selected: pd.DataFrame) -> None:
