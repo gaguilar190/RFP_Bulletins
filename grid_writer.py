@@ -342,12 +342,6 @@ COLUMN_ALIASES: dict[str, list[str]] = {
 }
 
 
-_ALIAS_LOOKUP: dict[str, str] = {}
-for _standard_field, _aliases in COLUMN_ALIASES.items():
-    for _alias in _aliases:
-        _ALIAS_LOOKUP[" ".join(_alias.lower().split())] = _standard_field
-
-
 # -------------------------------------------------------------------
 # Basic helpers
 # -------------------------------------------------------------------
@@ -512,34 +506,20 @@ def _build_alias_lookup() -> dict[str, str]:
 
 
 def _resolve_template_field(header: Any) -> str | None:
-    """
-    Converts a template header into a standard internal field name.
-
-    Example:
-    - "Illuminated?"
-    - "Illuminated (Y/N)"
-    - "Illumination"
-
-    all resolve to:
-    - "illuminated"
-    """
     normalized = _normalize_header(header)
     if not normalized:
         return None
 
     alias_lookup = _build_alias_lookup()
 
-    # Exact match first.
     if normalized in alias_lookup:
         return alias_lookup[normalized]
 
-    # Containment match second.
     for alias, standard_field in alias_lookup.items():
         if alias and (alias in normalized or normalized in alias):
             if len(alias) >= 4 and len(normalized) >= 4:
                 return standard_field
 
-    # Fuzzy match third.
     if process is not None and fuzz is not None:
         choices = list(alias_lookup.keys())
         match = process.extractOne(normalized, choices, scorer=fuzz.token_sort_ratio)
@@ -562,14 +542,12 @@ def _get_value_for_standard_field(
     campaign_end = _format_date(requirements.get("campaign_end"))
 
     if field is None:
-        # Last fallback: exact normalized match to a row column.
         h = _normalize_header(header)
         for col in row.index:
             if _normalize_header(col) == h:
                 return row.get(col)
         return ""
 
-    # Fixed / business rule fields
     if field == "hold_status":
         return "Available"
 
@@ -588,7 +566,6 @@ def _get_value_for_standard_field(
     if field == "taxes":
         return 0
 
-    # Common location and unit fields
     if field == "market":
         return _first_existing(row, ["market", "city"], "")
 
@@ -622,7 +599,6 @@ def _get_value_for_standard_field(
     if field == "size":
         return _first_existing(row, ["size"], "")
 
-    # Digital fields
     if field == "digital_spot_length":
         return _first_existing(row, ["spot_length", "spot_length_seconds"], "")
 
@@ -641,7 +617,6 @@ def _get_value_for_standard_field(
     if field == "pixel_size":
         return _first_existing(row, ["pixel_size", "pixel_size_hxw"], "")
 
-    # Impressions
     if field == "weekly_impressions":
         return _int_or_blank(
             _first_existing(
@@ -681,7 +656,6 @@ def _get_value_for_standard_field(
             )
         )
 
-    # Dates
     if field == "start_date":
         return campaign_start
 
@@ -694,7 +668,6 @@ def _get_value_for_standard_field(
     if field == "number_of_cycles":
         return _contracted_periods(row)
 
-    # Pricing
     if field == "rate_card":
         return _money(_first_existing(row, ["rate_card_4wk", "rate_card"], 0))
 
@@ -729,7 +702,6 @@ def _get_value_for_standard_field(
     if field == "cpm":
         return _money(_first_existing(row, ["cpm"], 0))
 
-    # Production/admin fields
     if field == "forced_vendor_production_cost":
         return 0
 
@@ -754,7 +726,6 @@ def _get_value_for_standard_field(
     }:
         return ""
 
-    # Target/location/distance
     if field == "target_area_location":
         return _first_existing(row, ["target_location"], _target_location_from_requirements(requirements))
 
@@ -764,7 +735,6 @@ def _get_value_for_standard_field(
             return ""
         return round(_to_number(value, 0), 2)
 
-    # Notes should only use pricing-grid comments/notes, not AI scoring explanation.
     if field == "notes":
         return _first_existing(
             row,
@@ -794,11 +764,6 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
 # -------------------------------------------------------------------
 
 def _find_header_row(ws) -> int:
-    """
-    Finds the real field header row by seeing how many columns can be mapped
-    to known standard fields. This is much more durable than checking exact
-    wording only.
-    """
     best_row = 1
     best_score = 0
 
@@ -822,7 +787,6 @@ def _find_header_row(ws) -> int:
         unique_fields = set(fields_found)
         score = len(unique_fields)
 
-        # Header rows typically have several operational fields.
         if {"vendor", "unit_id", "media_type"} & unique_fields:
             score += 2
 
@@ -835,7 +799,6 @@ def _find_header_row(ws) -> int:
         if {"install_cost", "production_cost", "total_client_cost"} & unique_fields:
             score += 2
 
-        # Avoid choosing category rows like "HOLDS" or "PRODUCTION".
         joined = _normalize_header(" ".join(raw_values))
         if joined in {"holds", "production"}:
             score -= 5
@@ -866,30 +829,59 @@ def _copy_row_style(ws, source_row: int, target_row: int) -> None:
             target.font = copy(source.font)
 
 
-def _clear_template_body(ws, header_row: int, rows_to_clear: int) -> None:
-    start_row = header_row + 1
-    end_row = max(ws.max_row, start_row + rows_to_clear + 5)
+def _is_visible_row(ws, row_idx: int) -> bool:
+    row_dim = ws.row_dimensions[row_idx]
+    return not bool(row_dim.hidden)
 
-    for row_idx in range(start_row, end_row + 1):
+
+def _get_visible_data_rows(ws, header_row: int, needed_rows: int) -> list[int]:
+    visible_rows = []
+    row_idx = header_row + 1
+
+    max_row_to_check = max(
+        ws.max_row + needed_rows + 20,
+        header_row + needed_rows + 20,
+    )
+
+    while row_idx <= max_row_to_check and len(visible_rows) < needed_rows:
+        if _is_visible_row(ws, row_idx):
+            visible_rows.append(row_idx)
+        row_idx += 1
+
+    return visible_rows
+
+
+def _clear_template_body(ws, header_row: int, rows_to_clear: int) -> None:
+    visible_rows = _get_visible_data_rows(ws, header_row, rows_to_clear + 10)
+
+    for row_idx in visible_rows:
         for col_idx in range(1, ws.max_column + 1):
             ws.cell(row_idx, col_idx).value = None
 
 
 def _write_selected_to_template(ws, selected: pd.DataFrame, requirements: dict[str, Any]) -> None:
     header_row = _find_header_row(ws)
-    data_start_row = header_row + 1
 
     headers = [
         ws.cell(header_row, col_idx).value
         for col_idx in range(1, ws.max_column + 1)
     ]
 
+    needed_rows = max(len(selected), 1)
+    visible_rows = _get_visible_data_rows(ws, header_row, needed_rows)
+
     _clear_template_body(ws, header_row, len(selected))
 
-    style_source_row = data_start_row
+    if not visible_rows:
+        visible_rows = [header_row + 1]
+
+    style_source_row = visible_rows[0]
 
     for df_idx, (_, selected_row) in enumerate(selected.iterrows()):
-        excel_row = data_start_row + df_idx
+        if df_idx >= len(visible_rows):
+            break
+
+        excel_row = visible_rows[df_idx]
 
         if excel_row != style_source_row:
             _copy_row_style(ws, style_source_row, excel_row)
@@ -902,7 +894,7 @@ def _write_selected_to_template(ws, selected: pd.DataFrame, requirements: dict[s
             ws.cell(excel_row, col_idx).value = value
 
     if selected.empty:
-        ws.cell(data_start_row, 1).value = "No selected units."
+        ws.cell(visible_rows[0], 1).value = "No selected units."
 
 
 def _write_generic_output(wb, selected: pd.DataFrame) -> None:
@@ -943,6 +935,4 @@ def write_output_workbook(
         wb = Workbook()
         _write_generic_output(wb, selected)
 
-    # Do not add extra audit tabs to the client-facing workbook.
-    # The output should preserve the uploaded agency grid format only.
     wb.save(output_path)
