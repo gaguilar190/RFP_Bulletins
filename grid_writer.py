@@ -22,7 +22,7 @@ def _to_number(value: Any, default: float = 0.0) -> float:
         if value is None or value == "":
             return default
         if isinstance(value, str):
-            value = value.replace("$", "").replace(",", "").strip()
+            value = value.replace("$", "").replace(",", "").replace("%", "").strip()
             if value == "":
                 return default
         return float(value)
@@ -52,7 +52,7 @@ def _campaign_date_range(requirements: dict[str, Any]) -> str:
 
 def _normalize_header(value: Any) -> str:
     text = _safe_str(value).lower()
-        replacements = {
+    replacements = {
         "#": " number ",
         "+": " plus ",
         "&": " and ",
@@ -63,6 +63,8 @@ def _normalize_header(value: Any) -> str:
         ")": " ",
         "%": " percent ",
         "?": " ",
+        ".": " ",
+        ",": " ",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
@@ -104,6 +106,38 @@ def _is_special_unit_01134(row: pd.Series) -> bool:
     return unit_id in {"01134", "01134-SF", "1134", "1134-SF"}
 
 
+def _install_cost(row: pd.Series) -> int:
+    return 1600 if _is_special_unit_01134(row) else 850
+
+
+def _production_cost(row: pd.Series) -> int:
+    return 950 if _is_special_unit_01134(row) else 750
+
+
+def _target_location_from_requirements(requirements: dict[str, Any]) -> str:
+    pois = requirements.get("poi_requirements") or []
+    if pois and isinstance(pois, list):
+        poi = pois[0] or {}
+        return _safe_str(
+            poi.get("poi_name")
+            or poi.get("poi_address")
+            or ""
+        )
+    return ""
+
+
+def _contracted_periods(row: pd.Series) -> Any:
+    value = _first_existing(row, ["number_of_4wk_periods", "contracted_4wk_periods"], "")
+    if value != "":
+        return value
+
+    contracted_weeks = _to_number(_first_existing(row, ["contracted_weeks"], 0), 0)
+    if contracted_weeks:
+        return round(contracted_weeks / 4, 2)
+
+    return ""
+
+
 def _value_for_template_header(header: str, row: pd.Series, requirements: dict[str, Any]) -> Any:
     h = _normalize_header(header)
 
@@ -117,20 +151,22 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
     if h in {"availability"}:
         return _campaign_date_range(requirements)
 
-    if h in {"illumination", "illuminated"}:
+    if h in {"illumination", "illuminated", "illuminated"}:
         return "Yes"
 
-    if h in {"forced vendor production y n", "is production forced", "forced vendor production"}:
+    if h in {
+        "forced vendor production y n",
+        "is production forced",
+        "forced vendor production",
+        "production forced",
+    }:
         return "No"
 
     if h in {"taxes", "tax"}:
         return 0
 
-    # Original RFP template fields
-    if h == "market":
-        return _first_existing(row, ["market", "city"], "")
-
-    if h == "client market name":
+    # Common RFP template fields
+    if h in {"dma", "market", "client market name"}:
         return _first_existing(row, ["market", "city"], "")
 
     if h in {"format", "media type"}:
@@ -154,13 +190,61 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
     if h == "longitude":
         return _first_existing(row, ["longitude"], "")
 
+    if h in {"zip code", "zipcode", "zip"}:
+        return _first_existing(row, ["zip_code", "zipcode", "zip"], "")
+
     if h in {"size hxw", "size", "dimensions"}:
         return _first_existing(row, ["size"], "")
 
     if h in {"number of units", "of units"}:
         return 1
 
-    if h in {"18 plus impressions cycle", "18 plus 4 week impressions", "a18 plus 4 wk impressions"}:
+    # Digital fields
+    if h in {"digital spot length", "spot length"}:
+        return _first_existing(row, ["spot_length", "spot_length_seconds"], "")
+
+    if h in {"number of spots per loop", "of spots per loop", "spots per loop"}:
+        return _first_existing(row, ["spots_per_loop", "number_of_spots", "spots"], "")
+
+    if h == "loop length seconds":
+        return _first_existing(row, ["loop_length_seconds"], "")
+
+    if h == "digital display type":
+        media_type = _safe_str(_first_existing(row, ["media_type"], ""))
+        if "digital" in media_type.lower():
+            return "Digital"
+        return ""
+
+    if h == "pixel size h x w":
+        return _first_existing(row, ["pixel_size", "pixel_size_hxw"], "")
+
+    # Impressions
+    if h in {
+        "1 week a18 plus geopath impressions",
+        "1 week a18 geopath impressions",
+        "18 plus impressions week",
+        "a18 plus weekly impressions",
+        "weekly impressions",
+    }:
+        return _int_or_blank(
+            _first_existing(
+                row,
+                [
+                    "geopath_a18_weekly_impressions",
+                    "a18_weekly_impressions",
+                    "weekly_impressions",
+                ],
+                "",
+            )
+        )
+
+    if h in {
+        "4 week a18 plus geopath impressions",
+        "4 week a18 geopath impressions",
+        "18 plus impressions cycle",
+        "18 plus 4 week impressions",
+        "a18 plus 4 wk impressions",
+    }:
         return _int_or_blank(
             _first_existing(
                 row,
@@ -186,23 +270,24 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
             )
         )
 
-    if h in {"18 plus impressions week", "a18 plus weekly impressions", "weekly impressions"}:
-        return _int_or_blank(
-            _first_existing(
-                row,
-                [
-                    "geopath_a18_weekly_impressions",
-                    "a18_weekly_impressions",
-                    "weekly_impressions",
-                ],
-                "",
-            )
-        )
+    # Dates
+    if h == "start date":
+        return campaign_start
 
-    if h in {"rate card cycle", "rate card", "4 week rate card"}:
+    if h == "end date":
+        return campaign_end
+
+    # Pricing
+    if h in {"4 week rate card", "rate card cycle", "rate card"}:
         return _money(_first_existing(row, ["rate_card_4wk", "rate_card"], 0))
 
-    if h in {"net media cost cycle", "4 week media cost", "4 week net media cost"}:
+    # Your rule: 4 week media cost should always be negotiated rate
+    if h in {
+        "4 week rate",
+        "4 week media cost",
+        "4 week net media cost",
+        "net media cost cycle",
+    }:
         return _money(
             _first_existing(
                 row,
@@ -215,22 +300,50 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
             )
         )
 
-    if h == "start date":
-        return campaign_start
-
-    if h == "end date":
-        return campaign_end
-
-    if h in {"number of cycles", "of cycles"}:
-        contracted_weeks = _to_number(_first_existing(row, ["contracted_weeks"], 0), 0)
-        if contracted_weeks:
-            return round(contracted_weeks / 4, 2)
-        return ""
+    if h in {"number of 4 wk periods", "number of 4 week periods", "number of cycles", "of cycles"}:
+        return _contracted_periods(row)
 
     if h == "cycle type":
         return "4 Week"
 
-    if h in {"number of copy changes included at no cost after initial install", "of copy changes included at no cost after initial install"}:
+    if h in {"total spaces cost net", "net campaign media cost"}:
+        return _money(_first_existing(row, ["contracted_media_cost", "total_media_cost"], 0))
+
+    if h in {"total media install production net", "total campaign cost"}:
+        total = _to_number(_first_existing(row, ["contracted_media_cost", "total_media_cost"], 0), 0)
+        total += _install_cost(row)
+        total += _production_cost(row)
+        return _money(total)
+
+    if h == "cpm":
+        return _money(_first_existing(row, ["cpm"], 0))
+
+    # Install and production rules
+    if h in {
+        "installation cost",
+        "install cost",
+        "initial installation cost net",
+        "installation cost final",
+        "initial install cost",
+    }:
+        return _install_cost(row)
+
+    if h in {
+        "production cost",
+        "production cost net",
+        "production cost final",
+        "total to produce",
+    }:
+        return _production_cost(row)
+
+    if h == "forced vendor production cost":
+        return 0
+
+    # Other production fields
+    if h in {
+        "number of copy changes included at no cost after initial install",
+        "of copy changes included at no cost after initial install",
+    }:
         return 0
 
     if h in {"number of paid installs", "of paid installs"}:
@@ -239,17 +352,8 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
     if h == "total postings":
         return 1
 
-    if h == "installation cost":
-        return 1600 if _is_special_unit_01134(row) else 850
-
     if h == "print qty per posting":
         return 1
-
-    if h in {"total to produce", "production cost"}:
-        return 950 if _is_special_unit_01134(row) else 750
-
-    if h == "forced vendor production cost":
-        return 0
 
     if h == "production shipping address":
         return ""
@@ -266,45 +370,28 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
     if h == "production contact":
         return ""
 
-    if h in {"number of spots", "of spots"}:
-        return _first_existing(row, ["number_of_spots", "spots"], "")
-
-    if h == "spot length":
-        return _first_existing(row, ["spot_length", "spot_length_seconds"], "")
-
-    if h == "net campaign media cost":
-        return _money(_first_existing(row, ["contracted_media_cost", "total_media_cost"], 0))
-
-    if h == "cancellation clause":
+    if h == "production rep name":
         return ""
 
-    if h == "summary":
-        return _first_existing(row, ["selection_reason", "comments", "description"], "")
+    # Target/location/distance fields
+    if h in {"store covered", "target area location"}:
+        return _first_existing(row, ["target_location"], _target_location_from_requirements(requirements))
 
-    if h == "target area location":
-        return _first_existing(row, ["target_location"], "")
-
-    if h == "distance from target miles":
+    if h in {"approximate distance mi", "distance from target miles", "distance to poi miles"}:
         value = _first_existing(row, ["distance_to_poi_miles"], "")
         if value == "":
             return ""
         return round(_to_number(value, 0), 2)
 
-    if h == "production rep name":
-        return ""
+    # Notes
+    if h in {"notes", "comments", "comment", "summary"}:
+        return _first_existing(
+            row,
+            ["selection_reason", "review_flags", "comments", "description"],
+            "",
+        )
 
-    if h == "loop length seconds":
-        return _first_existing(row, ["loop_length_seconds"], "")
-
-    if h == "digital display type":
-        media_type = _safe_str(_first_existing(row, ["media_type"], ""))
-        if "digital" in media_type.lower():
-            return "Digital"
-        return ""
-
-    if h == "pixel size h x w":
-        return _first_existing(row, ["pixel_size", "pixel_size_hxw"], "")
-
+    # Misc fields
     if h == "popfacts persons 18 plus yrs 1wk total impressions":
         return _int_or_blank(
             _first_existing(
@@ -324,16 +411,6 @@ def _value_for_template_header(header: str, row: pd.Series, requirements: dict[s
     if h == "offer id":
         return _first_existing(row, ["offer_id"], "")
 
-    # Business rule fields that may appear in other agency templates
-    if h in {"install cost", "installation cost final"}:
-        return 1600 if _is_special_unit_01134(row) else 850
-
-    if h in {"production cost final", "production cost"}:
-        return 950 if _is_special_unit_01134(row) else 750
-
-    if h in {"is production forced"}:
-        return "No"
-
     # Fallback direct column match
     for col in row.index:
         if _normalize_header(col) == h:
@@ -347,17 +424,19 @@ def _find_header_row(ws) -> int:
     best_score = 0
 
     expected_headers = {
-        "market",
-        "format",
-        "vendor inventory number",
-        "geopath id number",
+        "dma",
+        "vendor",
+        "media type",
+        "unit",
+        "geopath id",
         "location description",
         "latitude",
         "longitude",
-        "rate card cycle",
-        "net media cost cycle",
-        "start date",
-        "end date",
+        "4 week rate card",
+        "4 week rate",
+        "initial installation cost net",
+        "production cost net",
+        "notes",
     }
 
     max_scan = min(ws.max_row, 20)
@@ -423,55 +502,6 @@ def _write_selected_to_template(ws, selected: pd.DataFrame, requirements: dict[s
             ws.cell(excel_row, col_idx).value = value
 
 
-def _write_dataframe_sheet(wb, sheet_name: str, df: pd.DataFrame) -> None:
-    if sheet_name in wb.sheetnames:
-        del wb[sheet_name]
-
-    ws = wb.create_sheet(sheet_name)
-
-    if df is None or df.empty:
-        ws.cell(1, 1).value = "No records."
-        return
-
-    headers = list(df.columns)
-    ws.append(headers)
-
-    for _, row in df.iterrows():
-        ws.append([row.get(col) for col in headers])
-
-    for cell in ws[1]:
-        cell.font = copy(cell.font)
-        cell.font = cell.font.copy(bold=True)
-
-    ws.freeze_panes = "A2"
-
-    for col_cells in ws.columns:
-        max_len = 0
-        col_letter = col_cells[0].column_letter
-        for cell in col_cells[:100]:
-            max_len = max(max_len, len(str(cell.value or "")))
-        ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
-
-
-def _write_requirements_sheet(wb, requirements: dict[str, Any]) -> None:
-    if "Requirement Checklist" in wb.sheetnames:
-        del wb["Requirement Checklist"]
-
-    ws = wb.create_sheet("Requirement Checklist")
-    ws.cell(1, 1).value = "Requirement"
-    ws.cell(1, 2).value = "Value"
-
-    row_idx = 2
-    for key, value in requirements.items():
-        ws.cell(row_idx, 1).value = key
-        ws.cell(row_idx, 2).value = str(value)
-        row_idx += 1
-
-    ws.freeze_panes = "A2"
-    ws.column_dimensions["A"].width = 28
-    ws.column_dimensions["B"].width = 80
-
-
 def _write_generic_output(wb, selected: pd.DataFrame) -> None:
     ws = wb.active
     ws.title = "Filled RFP Grid"
@@ -510,9 +540,6 @@ def write_output_workbook(
         wb = Workbook()
         _write_generic_output(wb, selected)
 
-    _write_requirements_sheet(wb, requirements)
-    _write_dataframe_sheet(wb, "Selected Units Review", selected)
-    _write_dataframe_sheet(wb, "Excluded Units", excluded)
-    _write_dataframe_sheet(wb, "Missing Fields Report", missing_fields)
-
+    # Do not add extra audit tabs to the client-facing workbook.
+    # The output should preserve the uploaded agency grid format only.
     wb.save(output_path)
