@@ -52,7 +52,7 @@ def _campaign_date_range(requirements: dict[str, Any]) -> str:
 
 def _normalize_header(value: Any) -> str:
     text = _safe_str(value).lower()
-    replacements = {
+        replacements = {
         "#": " number ",
         "+": " plus ",
         "&": " and ",
@@ -62,6 +62,7 @@ def _normalize_header(value: Any) -> str:
         "(": " ",
         ")": " ",
         "%": " percent ",
+        "?": " ",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
