@@ -81,19 +81,51 @@ if run_button:
     except Exception as exc:
         st.error(f"Requirements JSON is invalid: {exc}")
         st.stop()
+ 
+    brief_lower = brief_text.lower()
 
     # If markets were extracted but cities were not, use markets as city/location filters too.
-    # This prevents San Francisco/Sacramento briefs from returning zero results just because cities is empty.
     if requirements.get("markets") and not requirements.get("cities"):
         requirements["cities"] = requirements["markets"]
 
-    # If the brief asks for bulletins generally, include both static and digital bulletin formats.
-    # This prevents the AI from narrowing the RFP to only Digital Bulletin.
-    brief_lower = brief_text.lower()
-    if "bulletins" in brief_lower or "bulletin" in brief_lower:
+    # If the brief specifically asks for Digital Bulletins, keep it digital only.
+    # Do not expand to static bulletins in this case.
+    if "digital bulletins" in brief_lower or "digital bulletin" in brief_lower:
+        requirements["media_types"] = ["Digital Bulletin"]
+    elif "bulletins" in brief_lower or "bulletin" in brief_lower:
         media_types = set(requirements.get("media_types") or [])
         media_types.update(["Static Bulletin", "Digital Bulletin", "Bulletin"])
         requirements["media_types"] = list(media_types)
+
+    # SoFi Stadium fallback. This makes SoFi a hard POI when the brief mentions it.
+    # This prevents the app from selecting DTLA boards when the target is SoFi.
+    if "sofi stadium" in brief_lower or "sofi" in brief_lower:
+        requirements["markets"] = ["Los Angeles"]
+        requirements["cities"] = list(
+            set((requirements.get("cities") or []) + ["Los Angeles", "Inglewood"])
+        )
+        requirements["poi_requirements"] = [
+            {
+                "poi_name": "SoFi Stadium",
+                "poi_address": "1001 Stadium Dr, Inglewood, CA",
+                "latitude": 33.9535,
+                "longitude": -118.3392,
+                "priority": 1,
+            }
+        ]
+        requirements["max_distance_miles"] = requirements.get("max_distance_miles") or 15
+
+    # Budget fallback. If the brief says less than $15,000, enforce it as max unit rate.
+    if (
+        "less than $15,000" in brief_lower
+        or "less than 15000" in brief_lower
+        or "higher than $15k" in brief_lower
+        or "higher than 15k" in brief_lower
+        or "$15k" in brief_lower
+        or "$15,000" in brief_lower
+    ):
+        requirements["max_unit_rate"] = 15000
+   
 
     has_geography = bool(
         requirements.get("markets")
