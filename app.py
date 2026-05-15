@@ -163,7 +163,6 @@ if run_button:
             inventory["distance_to_poi_miles"] = None
             inventory["target_location"] = ""
             inventory["distance_note"] = "No POI provided."
-
     with st.spinner("Calculating pricing..."):
         inventory = add_pricing(
             inventory,
@@ -171,9 +170,25 @@ if run_button:
             pricing_rules_path=CONFIG_DIR / "pricing_rules.json",
         )
 
+    # Hard filter by max unit rate if the brief has a budget cap.
+    max_unit_rate = requirements.get("max_unit_rate")
+    if max_unit_rate:
+        if "four_week_media_cost" in inventory.columns:
+            inventory = inventory[inventory["four_week_media_cost"].fillna(0) <= float(max_unit_rate)]
+        elif "negotiated_rate_4wk" in inventory.columns:
+            inventory = inventory[inventory["negotiated_rate_4wk"].fillna(0) <= float(max_unit_rate)]
+
+    # Hard filter by POI distance if a max distance exists.
+    max_distance = requirements.get("max_distance_miles")
+    if max_distance and "distance_to_poi_miles" in inventory.columns:
+        inventory = inventory[
+            inventory["distance_to_poi_miles"].notna()
+            & (inventory["distance_to_poi_miles"] <= float(max_distance))
+        ]
+
     with st.spinner("Matching units..."):
         selected, excluded = match_units(inventory, requirements)
-
+   
     st.success(f"Selected {len(selected)} units. Excluded {len(excluded)} units.")
 
     if not selected.empty:
