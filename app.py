@@ -170,14 +170,44 @@ if run_button:
             pricing_rules_path=CONFIG_DIR / "pricing_rules.json",
         )
 
-    # Hard filter by max unit rate if the brief has a budget cap.
+     # Soft budget guidance.
+    # Do NOT remove units just because they are slightly above budget.
+    # Instead, flag them so we can still propose strong units near the target.
     max_unit_rate = requirements.get("max_unit_rate")
     if max_unit_rate:
-        if "four_week_media_cost" in inventory.columns:
-            inventory = inventory[inventory["four_week_media_cost"].fillna(0) <= float(max_unit_rate)]
-        elif "negotiated_rate_4wk" in inventory.columns:
-            inventory = inventory[inventory["negotiated_rate_4wk"].fillna(0) <= float(max_unit_rate)]
+        try:
+            budget_cap = float(max_unit_rate)
+            soft_overage_limit = budget_cap * 1.20  # allows up to 20% over budget as review-worthy
 
+            rate_col = None
+            if "four_week_media_cost" in inventory.columns:
+                rate_col = "four_week_media_cost"
+            elif "negotiated_rate_4wk" in inventory.columns:
+                rate_col = "negotiated_rate_4wk"
+
+            if rate_col:
+                def budget_status(rate):
+                    try:
+                        rate = float(rate or 0)
+                    except Exception:
+                        return "Missing rate; review needed"
+
+                    if rate <= budget_cap:
+                        return "Within stated budget"
+                    if rate <= soft_overage_limit:
+                        return "Slightly over budget; review with client"
+                    return "Over budget; include only if strategically strong"
+
+                inventory["budget_status"] = inventory[rate_col].apply(budget_status)
+
+                if "review_flags" in inventory.columns:
+                    inventory["review_flags"] = inventory["review_flags"].fillna("").astype(str)
+                    inventory["review_flags"] = inventory["review_flags"] + " | " + inventory["budget_status"]
+                else:
+                    inventory["review_flags"] = inventory["budget_status"]
+
+        except Exception:
+            pass
     # Hard filter by POI distance if a max distance exists.
     max_distance = requirements.get("max_distance_miles")
     if max_distance and "distance_to_poi_miles" in inventory.columns:
