@@ -208,13 +208,33 @@ if run_button:
 
         except Exception:
             pass
-    # Hard filter by POI distance if a max distance exists.
+       # Soft distance guidance.
+    # If the brief gives an exact radius, respect it.
+    # If the app inferred a POI like SoFi, do not remove everything too aggressively.
     max_distance = requirements.get("max_distance_miles")
     if max_distance and "distance_to_poi_miles" in inventory.columns:
-        inventory = inventory[
-            inventory["distance_to_poi_miles"].notna()
-            & (inventory["distance_to_poi_miles"] <= float(max_distance))
-        ]
+        try:
+            max_distance_float = float(max_distance)
+            soft_distance_limit = max_distance_float * 1.50
+
+            inventory["distance_status"] = inventory["distance_to_poi_miles"].apply(
+                lambda d: (
+                    "Within requested distance"
+                    if d is not None and float(d) <= max_distance_float
+                    else "Slightly outside requested distance; review"
+                    if d is not None and float(d) <= soft_distance_limit
+                    else "Outside requested distance; include only if strategically strong"
+                )
+            )
+
+            if "review_flags" in inventory.columns:
+                inventory["review_flags"] = inventory["review_flags"].fillna("").astype(str)
+                inventory["review_flags"] = inventory["review_flags"] + " | " + inventory["distance_status"]
+            else:
+                inventory["review_flags"] = inventory["distance_status"]
+
+        except Exception:
+            pass
 
     with st.spinner("Matching units..."):
         selected, excluded = match_units(inventory, requirements)
