@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -188,6 +189,193 @@ def _classify_media_fit(media_type: str, requested_media_types: list[str]) -> tu
         return 10, "", "Bulletin format is relevant, but not exact requested format."
 
     return -30, "", "Media format does not match the request."
+
+
+# -----------------------------
+# Planner Memory helpers
+# -----------------------------
+
+MEMORY_COLUMNS = [
+    "timestamp",
+    "advertiser",
+    "unit_id",
+    "action",
+    "market",
+    "city",
+    "media_type",
+    "recommendation_tier",
+    "proposal_role",
+    "proposal_score",
+    "rfp_markets",
+    "rfp_cities",
+    "rfp_media_types",
+    "rfp_tags",
+    "notes",
+]
+
+
+def load_planner_memory(memory_file) -> pd.DataFrame:
+    if memory_file is None:
+        return pd.DataFrame(columns=MEMORY_COLUMNS)
+
+    try:
+        memory = pd.read_csv(memory_file)
+    except Exception:
+        return pd.DataFrame(columns=MEMORY_COLUMNS)
+
+    for col in MEMORY_COLUMNS:
+        if col not in memory.columns:
+            memory[col] = ""
+
+    memory["unit_id_clean"] = memory["unit_id"].apply(_clean_unit_id)
+    return memory
+
+
+def get_rfp_tags(requirements: dict[str, Any], brief_text: str) -> list[str]:
+    brief_lower = _clean_text(brief_text)
+    tags = []
+
+    tag_keywords = {
+        "stadium": ["stadium", "sofi", "levi", "metlife", "gillette", "nrg", "arrowhead"],
+        "world_cup": ["world cup", " wc"],
+        "freeway": ["freeway", "highway", "i-5", "405", "105", "110", "710", "605", "91"],
+        "radius": ["radius", "mile", "within"],
+        "store_list": ["store list", "stores", "locations"],
+        "digital": ["digital bulletin", "digital bulletins", "digital"],
+        "budget_sensitive": ["budget", "under", "less than", "$15k", "$15,000"],
+    }
+
+    for tag, keywords in tag_keywords.items():
+        if any(keyword in brief_lower for keyword in keywords):
+            tags.append(tag)
+
+    if requirements.get("poi_requirements"):
+        tags.append("poi")
+
+    if requirements.get("max_distance_miles"):
+        tags.append("distance_based")
+
+    return sorted(set(tags))
+
+
+def planner_memory_adjustment(
+    row: pd.Series,
+    planner_memory: pd.DataFrame,
+    requirements: dict[str, Any],
+    brief_text: str,
+) -> tuple[int, str, str]:
+    if planner_memory is None or planner_memory.empty:
+        return 0, "", ""
+
+    unit_id = _clean_unit_id(row.get("unit_id"))
+    if not unit_id:
+        return 0, "", ""
+
+    memory = planner_memory.copy()
+
+    if "unit_id_clean" not in memory.columns:
+        memory["unit_id_clean"] = memory["unit_id"].apply(_clean_unit_id)
+
+    unit_history = memory[memory["unit_id_clean"] == unit_id].copy()
+
+    if unit_history.empty:
+        return 0, "", ""
+
+    current_tags = set(get_rfp_tags(requirements, brief_text))
+    current_markets = {_clean_text(x) for x in (requirements.get("markets") or [])}
+    current_media = {_clean_text(x) for x in (requirements.get("media_types") or [])}
+
+    adjustment = 0
+    positive_hits = 0
+    negative_hits = 0
+
+    for _, memory_row in unit_history.iterrows():
+        action = _clean_text(memory_row.get("action"))
+        memory_market = _clean_text(memory_row.get("market"))
+        memory_media = _clean_text(memory_row.get("media_type"))
+        memory_tags = set(str(memory_row.get("rfp_tags") or "").split("|"))
+
+        context_match = False
+
+        if memory_market and any(market in memory_market or memory_market in market for market in current_markets):
+            context_match = True
+
+        if memory_media and any(media in memory_media or memory_media in media for media in current_media):
+            context_match = True
+
+        if current_tags and memory_tags and current_tags.intersection(memory_tags):
+            context_match = True
+
+        if not context_match:
+            continue
+
+        if action in ["kept", "submitted", "client approved", "client_approved"]:
+            adjustment += 18
+            positive_hits += 1
+        elif action in ["premium exception", "premium_exception"]:
+            adjustment += 8
+            positive_hits += 1
+        elif action in ["removed", "rejected", "do not propose", "do_not_propose"]:
+            adjustment -= 22
+            negative_hits += 1
+
+    if adjustment > 0:
+        return adjustment, f"Planner memory boost based on {positive_hits} similar past selection(s).", ""
+
+    if adjustment < 0:
+        return adjustment, "", f"Planner memory penalty based on {negative_hits} similar past removal(s)."
+
+    return 0, "", ""
+
+
+def build_memory_rows(
+    selected_df: pd.DataFrame,
+    requirements: dict[str, Any],
+    brief_text: str,
+    kept_unit_ids: list[str],
+    removed_unit_ids: list[str],
+    advertiser: str,
+    notes: str,
+) -> pd.DataFrame:
+    rows = []
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    rfp_tags = "|".join(get_rfp_tags(requirements, brief_text))
+
+    kept_clean = {_clean_unit_id(x) for x in kept_unit_ids}
+    removed_clean = {_clean_unit_id(x) for x in removed_unit_ids}
+
+    for _, row in selected_df.iterrows():
+        unit_id = str(row.get("unit_id") or "")
+        unit_id_clean = _clean_unit_id(unit_id)
+
+        if unit_id_clean in removed_clean:
+            action = "removed"
+        elif unit_id_clean in kept_clean:
+            action = "kept"
+        else:
+            action = "removed"
+
+        rows.append(
+            {
+                "timestamp": timestamp,
+                "advertiser": advertiser,
+                "unit_id": unit_id,
+                "action": action,
+                "market": row.get("market", ""),
+                "city": row.get("city", ""),
+                "media_type": row.get("media_type", ""),
+                "recommendation_tier": row.get("recommendation_tier", ""),
+                "proposal_role": row.get("proposal_role", ""),
+                "proposal_score": row.get("proposal_score", ""),
+                "rfp_markets": "|".join(str(x) for x in (requirements.get("markets") or [])),
+                "rfp_cities": "|".join(str(x) for x in (requirements.get("cities") or [])),
+                "rfp_media_types": "|".join(str(x) for x in (requirements.get("media_types") or [])),
+                "rfp_tags": rfp_tags,
+                "notes": notes,
+            }
+        )
+
+    return pd.DataFrame(rows, columns=MEMORY_COLUMNS)
 
 
 TARGET_HINTS = {
@@ -583,17 +771,8 @@ def score_proposal_candidates(
     inventory: pd.DataFrame,
     requirements: dict[str, Any],
     brief_text: str,
+    planner_memory: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """
-    Planner-style RFP optimizer.
-
-    This thinks more like an account planner:
-    - exact matches rise to the top
-    - strategic alternates are included when they support the client goal
-    - premium exceptions are allowed when location is excellent but budget is above request
-    - wrong markets are excluded
-    - budget and distance guide the recommendation, but do not blindly eliminate valuable boards
-    """
     if inventory is None or inventory.empty:
         return inventory
 
@@ -615,7 +794,6 @@ def score_proposal_candidates(
     has_stadium_intent = "stadium" in brief_lower or bool(requirements.get("poi_requirements"))
     has_radius_intent = requested_radius is not None or "radius" in brief_lower or "mile" in brief_lower
     has_freeway_intent = bool(requested_freeways) or "freeway" in brief_lower or "highway" in brief_lower
-    has_world_cup_intent = "world cup" in brief_lower or " wc" in brief_lower
 
     if "unit_id" in df.columns:
         df["unit_id_clean"] = df["unit_id"].apply(_clean_unit_id)
@@ -732,7 +910,7 @@ def score_proposal_candidates(
                     score += 25
                     reasons.append("Freeway board that can support market traffic flow.")
 
-        if has_world_cup_intent or has_stadium_intent:
+        if "world cup" in brief_lower or " wc" in brief_lower or has_stadium_intent:
             if any(term in row_text for term in ["stadium", "airport", "lax", "freeway", "traffic", "downtown"]):
                 score += 15
                 reasons.append("Strategic context aligns with event/stadium traffic.")
@@ -752,6 +930,21 @@ def score_proposal_candidates(
                 flags.append("Well over stated budget; include only as a premium exception.")
         elif max_unit_rate and rate_num is None:
             flags.append("Missing rate; review budget manually.")
+
+        memory_delta, memory_reason, memory_flag = planner_memory_adjustment(
+            row=row,
+            planner_memory=planner_memory,
+            requirements=requirements,
+            brief_text=brief_text,
+        )
+
+        score += memory_delta
+
+        if memory_reason:
+            reasons.append(memory_reason)
+
+        if memory_flag:
+            flags.append(memory_flag)
 
         if wrong_market and score < 0:
             recommendation_tier = "Exclude"
@@ -891,6 +1084,12 @@ with st.sidebar:
         key=f"brief_file_{reset_key}",
     )
 
+    planner_memory_file = st.file_uploader(
+        "4. Optional planner memory CSV",
+        type=["csv"],
+        key=f"planner_memory_file_{reset_key}",
+    )
+
     use_ai = st.checkbox(
         "Use free cloud AI to read brief",
         value=True,
@@ -965,6 +1164,11 @@ if run_button:
     if not brief_text.strip():
         st.error("Please paste or upload the RFP brief before running.")
         st.stop()
+
+    planner_memory = load_planner_memory(planner_memory_file)
+
+    if planner_memory_file is not None:
+        st.info(f"Loaded {len(planner_memory)} planner memory rows.")
 
     try:
         current_requirements_check = json.loads(requirements_json)
@@ -1061,10 +1265,20 @@ if run_button:
         )
 
     with st.spinner("Scoring proposal candidates..."):
-        selected = score_proposal_candidates(inventory, requirements, brief_text)
+        selected = score_proposal_candidates(
+            inventory=inventory,
+            requirements=requirements,
+            brief_text=brief_text,
+            planner_memory=planner_memory,
+        )
         excluded = inventory[~inventory.index.isin(selected.index)].copy()
 
     st.success(f"Selected {len(selected)} units. Excluded {len(excluded)} units.")
+
+    st.session_state[f"last_selected_{reset_key}"] = selected
+    st.session_state[f"last_requirements_{reset_key}"] = requirements
+    st.session_state[f"last_brief_text_{reset_key}"] = brief_text
+    st.session_state[f"last_planner_memory_{reset_key}"] = planner_memory
 
     if not selected.empty:
         preview_cols = [
@@ -1131,3 +1345,89 @@ if run_button:
 
     with st.expander("Missing fields report"):
         st.dataframe(load_result.missing_fields, use_container_width=True)
+
+
+# -----------------------------
+# Planner Memory feedback section
+# -----------------------------
+
+last_selected_key = f"last_selected_{reset_key}"
+last_requirements_key = f"last_requirements_{reset_key}"
+last_brief_key = f"last_brief_text_{reset_key}"
+last_memory_key = f"last_planner_memory_{reset_key}"
+
+if last_selected_key in st.session_state:
+    selected_for_memory = st.session_state[last_selected_key]
+    requirements_for_memory = st.session_state[last_requirements_key]
+    brief_for_memory = st.session_state[last_brief_key]
+    existing_memory = st.session_state.get(last_memory_key, pd.DataFrame(columns=MEMORY_COLUMNS))
+
+    with st.expander("Teach the agent from this RFP"):
+        st.write(
+            "Mark which units you would actually keep or remove. "
+            "Then download the updated planner memory CSV and upload it on future RFPs."
+        )
+
+        unit_options = [
+            str(x)
+            for x in selected_for_memory.get("unit_id", pd.Series(dtype=str)).dropna().tolist()
+        ]
+
+        advertiser_name = st.text_input(
+            "Advertiser or RFP name",
+            value="",
+            key=f"memory_advertiser_{reset_key}",
+        )
+
+        kept_units = st.multiselect(
+            "Units you would keep/propose",
+            options=unit_options,
+            default=unit_options,
+            key=f"memory_kept_units_{reset_key}",
+        )
+
+        removed_units = st.multiselect(
+            "Units you would remove/not propose",
+            options=unit_options,
+            default=[],
+            key=f"memory_removed_units_{reset_key}",
+        )
+
+        memory_notes = st.text_area(
+            "Planner notes",
+            value="",
+            placeholder="Example: Keep 105/405 corridor for SoFi. Use 40575/40576 only as premium exceptions.",
+            key=f"memory_notes_{reset_key}",
+        )
+
+        if st.button("Create updated planner memory CSV", key=f"create_memory_{reset_key}"):
+            new_memory_rows = build_memory_rows(
+                selected_df=selected_for_memory,
+                requirements=requirements_for_memory,
+                brief_text=brief_for_memory,
+                kept_unit_ids=kept_units,
+                removed_unit_ids=removed_units,
+                advertiser=advertiser_name,
+                notes=memory_notes,
+            )
+
+            updated_memory = pd.concat(
+                [existing_memory[MEMORY_COLUMNS], new_memory_rows],
+                ignore_index=True,
+            )
+
+            st.session_state[f"updated_memory_{reset_key}"] = updated_memory
+            st.success("Planner memory updated. Download it below and use it on your next RFP.")
+
+        updated_memory_key = f"updated_memory_{reset_key}"
+
+        if updated_memory_key in st.session_state:
+            updated_memory = st.session_state[updated_memory_key]
+
+            st.download_button(
+                label="Download updated planner memory CSV",
+                data=updated_memory.to_csv(index=False).encode("utf-8"),
+                file_name="planner_memory.csv",
+                mime="text/csv",
+                key=f"download_memory_{reset_key}",
+            )
