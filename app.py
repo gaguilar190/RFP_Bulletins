@@ -36,6 +36,18 @@ def _clean_unit_id(value: Any) -> str:
     return str(value or "").strip().upper().replace(" ", "")
 
 
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        cleaned = str(value).replace("$", "").replace(",", "").strip()
+        if cleaned == "":
+            return None
+        return float(cleaned)
+    except Exception:
+        return None
+
+
 TARGET_HINTS = {
     "sofi": {
         "keywords": ["sofi", "sofi stadium", "inglewood"],
@@ -46,6 +58,7 @@ TARGET_HINTS = {
             "el segundo",
             "westchester",
             "playa vista",
+            "los angeles",
         ],
         "markets": ["Los Angeles"],
         "cities": ["Los Angeles", "Inglewood"],
@@ -138,6 +151,8 @@ KNOWN_POIS = {
         "latitude": 33.9535,
         "longitude": -118.3392,
         "priority": 1,
+        "market": "Los Angeles",
+        "city": "Inglewood",
     },
     "levi's stadium": {
         "poi_name": "Levi's Stadium",
@@ -145,6 +160,8 @@ KNOWN_POIS = {
         "latitude": 37.403,
         "longitude": -121.970,
         "priority": 1,
+        "market": "San Francisco",
+        "city": "Santa Clara",
     },
     "levis stadium": {
         "poi_name": "Levi's Stadium",
@@ -152,6 +169,8 @@ KNOWN_POIS = {
         "latitude": 37.403,
         "longitude": -121.970,
         "priority": 1,
+        "market": "San Francisco",
+        "city": "Santa Clara",
     },
     "levi’s stadium": {
         "poi_name": "Levi's Stadium",
@@ -159,6 +178,8 @@ KNOWN_POIS = {
         "latitude": 37.403,
         "longitude": -121.970,
         "priority": 1,
+        "market": "San Francisco",
+        "city": "Santa Clara",
     },
     "metlife stadium": {
         "poi_name": "MetLife Stadium",
@@ -166,6 +187,8 @@ KNOWN_POIS = {
         "latitude": 40.8135,
         "longitude": -74.0745,
         "priority": 3,
+        "market": "New York",
+        "city": "East Rutherford",
     },
     "gillette stadium": {
         "poi_name": "Gillette Stadium",
@@ -173,6 +196,8 @@ KNOWN_POIS = {
         "latitude": 42.0909,
         "longitude": -71.2643,
         "priority": 3,
+        "market": "Boston",
+        "city": "Foxborough",
     },
     "at&t stadium": {
         "poi_name": "AT&T Stadium",
@@ -180,6 +205,8 @@ KNOWN_POIS = {
         "latitude": 32.7473,
         "longitude": -97.0945,
         "priority": 3,
+        "market": "Dallas",
+        "city": "Arlington",
     },
     "nrg stadium": {
         "poi_name": "NRG Stadium",
@@ -187,6 +214,8 @@ KNOWN_POIS = {
         "latitude": 29.6847,
         "longitude": -95.4107,
         "priority": 3,
+        "market": "Houston",
+        "city": "Houston",
     },
     "arrowhead stadium": {
         "poi_name": "Arrowhead Stadium",
@@ -194,6 +223,8 @@ KNOWN_POIS = {
         "latitude": 39.0490,
         "longitude": -94.4839,
         "priority": 3,
+        "market": "Kansas City",
+        "city": "Kansas City",
     },
     "mercedes-benz stadium": {
         "poi_name": "Mercedes-Benz Stadium",
@@ -201,6 +232,8 @@ KNOWN_POIS = {
         "latitude": 33.7554,
         "longitude": -84.4008,
         "priority": 3,
+        "market": "Atlanta",
+        "city": "Atlanta",
     },
     "lincoln financial field": {
         "poi_name": "Lincoln Financial Field",
@@ -208,6 +241,8 @@ KNOWN_POIS = {
         "latitude": 39.9008,
         "longitude": -75.1675,
         "priority": 3,
+        "market": "Philadelphia",
+        "city": "Philadelphia",
     },
 }
 
@@ -226,7 +261,7 @@ def detect_target_profiles(brief_text: str) -> list[str]:
 def apply_target_profiles(raw_requirements: dict[str, Any], brief_text: str) -> dict[str, Any]:
     """
     Adds target location intelligence without hard excluding all alternates.
-    This helps the app understand SoFi, DTLA, SF, Sacto, stadiums, and nearby areas.
+    This helps the app understand stadiums, cities, freeways, target markets, and POIs.
     """
     requirements = dict(raw_requirements or {})
     brief_lower = _clean_text(brief_text)
@@ -237,14 +272,29 @@ def apply_target_profiles(raw_requirements: dict[str, Any], brief_text: str) -> 
     cleaned_pois = []
     known_unit_ids = list(requirements.get("known_unit_ids") or [])
 
-    # Convert AI output like ["SoFi Stadium"] into proper POI dictionaries.
     for item in raw_pois:
         if isinstance(item, dict):
             cleaned_pois.append(item)
+
+            market = item.get("market")
+            city = item.get("city")
+            if market and market not in markets:
+                markets.append(market)
+            if city and city not in cities:
+                cities.append(city)
+
         elif isinstance(item, str):
             key = _clean_text(item)
             if key in KNOWN_POIS:
-                cleaned_pois.append(KNOWN_POIS[key])
+                poi = KNOWN_POIS[key]
+                cleaned_pois.append(poi)
+
+                market = poi.get("market")
+                city = poi.get("city")
+                if market and market not in markets:
+                    markets.append(market)
+                if city and city not in cities:
+                    cities.append(city)
             else:
                 cleaned_pois.append(
                     {
@@ -285,7 +335,6 @@ def apply_target_profiles(raw_requirements: dict[str, Any], brief_text: str) -> 
         if profile.get("max_distance_miles") and not requirements.get("max_distance_miles"):
             requirements["max_distance_miles"] = profile.get("max_distance_miles")
 
-    # Add any known POIs from the brief text, even if AI did not extract them.
     for key, poi in KNOWN_POIS.items():
         if key in brief_lower:
             existing_names = [
@@ -296,7 +345,13 @@ def apply_target_profiles(raw_requirements: dict[str, Any], brief_text: str) -> 
             if _clean_text(poi.get("poi_name")) not in existing_names:
                 cleaned_pois.append(poi)
 
-    # Fix common city/market extraction gaps.
+            market = poi.get("market")
+            city = poi.get("city")
+            if market and market not in markets:
+                markets.append(market)
+            if city and city not in cities:
+                cities.append(city)
+
     if "los angeles" in brief_lower or "sofi" in brief_lower or "dtla" in brief_lower:
         if "Los Angeles" not in markets:
             markets.append("Los Angeles")
@@ -330,7 +385,44 @@ def apply_target_profiles(raw_requirements: dict[str, Any], brief_text: str) -> 
         if "Santa Cruz" not in cities:
             cities.append("Santa Cruz")
 
-    # Media type correction.
+    if "atlanta" in brief_lower:
+        if "Atlanta" not in markets:
+            markets.append("Atlanta")
+        if "Atlanta" not in cities:
+            cities.append("Atlanta")
+
+    if "boston" in brief_lower:
+        if "Boston" not in markets:
+            markets.append("Boston")
+
+    if "dallas" in brief_lower:
+        if "Dallas" not in markets:
+            markets.append("Dallas")
+
+    if "houston" in brief_lower:
+        if "Houston" not in markets:
+            markets.append("Houston")
+        if "Houston" not in cities:
+            cities.append("Houston")
+
+    if "kansas city" in brief_lower:
+        if "Kansas City" not in markets:
+            markets.append("Kansas City")
+        if "Kansas City" not in cities:
+            cities.append("Kansas City")
+
+    if "philadelphia" in brief_lower:
+        if "Philadelphia" not in markets:
+            markets.append("Philadelphia")
+        if "Philadelphia" not in cities:
+            cities.append("Philadelphia")
+
+    if "new york" in brief_lower or "ny/nj" in brief_lower or "new jersey" in brief_lower:
+        if "New York" not in markets:
+            markets.append("New York")
+        if "New Jersey" not in markets:
+            markets.append("New Jersey")
+
     if "digital bulletins" in brief_lower or "digital bulletin" in brief_lower:
         requirements["media_types"] = ["Digital Bulletin"]
     elif "bulletins" in brief_lower or "bulletin" in brief_lower:
@@ -338,10 +430,11 @@ def apply_target_profiles(raw_requirements: dict[str, Any], brief_text: str) -> 
         media_types.update(["Static Bulletin", "Digital Bulletin", "Bulletin"])
         requirements["media_types"] = list(media_types)
 
-    # Budget should be guidance, not a hard blocker.
     if (
         "less than $15,000" in brief_lower
         or "less than 15000" in brief_lower
+        or "less than $15k" in brief_lower
+        or "less than 15k" in brief_lower
         or "higher than $15k" in brief_lower
         or "higher than 15k" in brief_lower
         or "$15k" in brief_lower
@@ -349,6 +442,22 @@ def apply_target_profiles(raw_requirements: dict[str, Any], brief_text: str) -> 
         or "15000" in brief_lower
     ):
         requirements["max_unit_rate"] = 15000
+
+    if not requirements.get("max_distance_miles"):
+        if "5 mile" in brief_lower or "5-mile" in brief_lower or "within 5" in brief_lower:
+            requirements["max_distance_miles"] = 5
+        elif "10 mile" in brief_lower or "10-mile" in brief_lower or "within 10" in brief_lower:
+            requirements["max_distance_miles"] = 10
+        elif "15 mile" in brief_lower or "15-mile" in brief_lower or "within 15" in brief_lower:
+            requirements["max_distance_miles"] = 15
+        elif "20 mile" in brief_lower or "20-mile" in brief_lower or "within 20" in brief_lower:
+            requirements["max_distance_miles"] = 20
+        elif "stadium" in brief_lower:
+            requirements["max_distance_miles"] = 35
+
+    if "world cup" in brief_lower or " wc" in brief_lower:
+        if not requirements.get("number_of_units"):
+            requirements["number_of_units"] = 25
 
     requirements["markets"] = markets
     requirements["cities"] = cities
@@ -365,36 +474,80 @@ def score_proposal_candidates(
     brief_text: str,
 ) -> pd.DataFrame:
     """
-    Scores and ranks proposal-worthy units.
+    Planner-style scoring for RFP recommendations.
 
-    Key behavior:
-    - SoFi Stadium returns 40575 and 40576 only when available.
-    - DTLA returns 10126 and 0103/103 only when available.
-    - Other POI/stadium/neighborhood requests are limited to a reasonable POI radius.
-    - Broader market requests can return more units.
-    - Budget is guidance and gets flagged, not used as a hard blocker.
+    Main behavior:
+    - Exact matches score highest.
+    - Budget and radius are ranking signals, not automatic blockers.
+    - Strategic alternates are allowed when they support the same requested market.
+    - Wrong markets are heavily penalized.
+    - The output should not return zero if there is usable inventory in the right geography.
     """
     if inventory is None or inventory.empty:
         return inventory
 
     df = inventory.copy()
     brief_lower = _clean_text(brief_text)
+
     target_profiles = requirements.get("matched_target_profiles") or detect_target_profiles(brief_text)
 
     requested_media_types = [_clean_text(x) for x in (requirements.get("media_types") or [])]
     requested_markets = [_clean_text(x) for x in (requirements.get("markets") or [])]
     requested_cities = [_clean_text(x) for x in (requirements.get("cities") or [])]
+    requested_unit_ids = {_clean_unit_id(x) for x in (requirements.get("known_unit_ids") or [])}
+
     max_unit_rate = requirements.get("max_unit_rate")
+    requested_radius = requirements.get("max_distance_miles")
+    requested_count = int(requirements.get("number_of_units") or 25)
+
+    freeway_terms = [
+        "freeway",
+        "interstate",
+        "highway",
+        "i-5",
+        "5 freeway",
+        "the 5",
+        "i5",
+        "interstate 5",
+        "101",
+        "105",
+        "110",
+        "405",
+        "605",
+        "10 freeway",
+        "710",
+        "91 freeway",
+    ]
+
+    has_freeway_intent = any(term in brief_lower for term in freeway_terms)
+
+    has_poi_or_distance_intent = bool(
+        requirements.get("poi_requirements")
+        or requested_radius
+        or any(term in brief_lower for term in ["stadium", "store list", "radius", "miles", "nearby", "near"])
+    )
 
     if "unit_id" in df.columns:
         df["unit_id_clean"] = df["unit_id"].apply(_clean_unit_id)
     else:
         df["unit_id_clean"] = ""
 
+    def text_has_any(text: str, terms: list[str]) -> bool:
+        return any(_clean_text(term) and _clean_text(term) in text for term in terms)
+
+    def get_rate_value(row: pd.Series) -> float | None:
+        for col in ["four_week_media_cost", "negotiated_rate_4wk", "contracted_media_cost", "rate_card"]:
+            if col in row.index:
+                value = _to_float(row.get(col))
+                if value is not None:
+                    return value
+        return None
+
     def score_row(row: pd.Series) -> pd.Series:
         score = 0
         reasons = []
         flags = []
+        tier = "Planner Review"
 
         unit_id = _clean_unit_id(row.get("unit_id"))
         city = _clean_text(row.get("city"))
@@ -403,9 +556,45 @@ def score_proposal_candidates(
         description = _clean_text(row.get("description"))
         comments = _clean_text(row.get("comments"))
         location = _clean_text(row.get("location"))
-        combined_text = " ".join([city, market, media_type, description, comments, location])
+        freeway = _clean_text(row.get("freeway_street", row.get("freeway", "")))
 
-        # 1. Target profile fit
+        combined_text = " ".join(
+            [
+                unit_id,
+                city,
+                market,
+                media_type,
+                description,
+                comments,
+                location,
+                freeway,
+            ]
+        )
+
+        market_match = False
+        city_match = False
+
+        if requested_markets:
+            market_match = any(m in market or m in combined_text for m in requested_markets)
+
+        if requested_cities:
+            city_match = any(c in city or c in combined_text for c in requested_cities)
+
+        if requested_markets or requested_cities:
+            if market_match:
+                score += 45
+                reasons.append("Matches requested market.")
+            elif city_match:
+                score += 45
+                reasons.append("Matches requested city or target area.")
+            else:
+                score -= 120
+                flags.append("Outside requested market or geography.")
+
+        if requested_unit_ids and unit_id in requested_unit_ids:
+            score += 80
+            reasons.append("Specific requested unit.")
+
         if target_profiles:
             best_profile_points = 0
 
@@ -417,112 +606,171 @@ def score_proposal_candidates(
                 poi_name = profile.get("poi", {}).get("poi_name") if profile.get("poi") else profile_name
 
                 if unit_id in primary_units:
-                    best_profile_points = max(best_profile_points, 70)
+                    best_profile_points = max(best_profile_points, 85)
                     reasons.append(f"Known strong fit for {poi_name}.")
-                elif any(c in city or c in combined_text for c in primary_cities):
-                    best_profile_points = max(best_profile_points, 35)
+                elif text_has_any(city, primary_cities) or text_has_any(combined_text, primary_cities):
+                    best_profile_points = max(best_profile_points, 50)
                     reasons.append(f"Located in primary target area for {poi_name}.")
-                elif any(c in city or c in combined_text for c in nearby_cities):
-                    best_profile_points = max(best_profile_points, 18)
-                    reasons.append(f"Nearby/supporting area for {poi_name}.")
+                elif text_has_any(city, nearby_cities) or text_has_any(combined_text, nearby_cities):
+                    best_profile_points = max(best_profile_points, 28)
+                    reasons.append(f"Nearby supporting area for {poi_name}.")
                 elif profile_name in {"sofi", "dtla"} and "los angeles" in market:
-                    best_profile_points = max(best_profile_points, 5)
-                    flags.append(f"Broad LA fit, but not closest to {poi_name}.")
+                    best_profile_points = max(best_profile_points, 15)
+                    flags.append(f"LA market alternate for {poi_name}.")
                 elif profile_name == "san_francisco" and any(
                     x in combined_text for x in ["san francisco", "santa clara", "oakland", "san mateo"]
                 ):
-                    best_profile_points = max(best_profile_points, 25)
-                    reasons.append("Relevant Bay Area/SF-area inventory.")
-                elif profile_name == "sacramento" and "sacramento" in combined_text:
-                    best_profile_points = max(best_profile_points, 25)
-                    reasons.append("Relevant Sacramento-area inventory.")
+                    best_profile_points = max(best_profile_points, 35)
+                    reasons.append("Relevant Bay Area inventory.")
 
             score += best_profile_points
 
             if best_profile_points == 0:
-                score -= 40
-                flags.append("Weak location fit versus requested target area.")
-
-        # 2. General market/city fit
-        if requested_markets or requested_cities:
-            if requested_markets and any(m in market or m in combined_text for m in requested_markets):
-                score += 15
-                reasons.append("Matches requested market.")
-            elif requested_cities and any(c in city or c in combined_text for c in requested_cities):
-                score += 15
-                reasons.append("Matches requested city/area.")
-            else:
-                score -= 40
-                flags.append("Outside requested market/city.")
-
-        # 3. Distance fit
-        distance = row.get("distance_to_poi_miles")
-        try:
-            distance_num = float(distance)
-            if distance_num <= 5:
-                score += 35
-                reasons.append(f"Very close to target POI ({distance_num:.1f} mi).")
-            elif distance_num <= 10:
-                score += 25
-                reasons.append(f"Close to target POI ({distance_num:.1f} mi).")
-            elif distance_num <= 15:
-                score += 15
-                flags.append(f"Moderate POI distance ({distance_num:.1f} mi).")
-            elif distance_num <= 20:
-                score -= 5
-                flags.append(f"Farther from POI ({distance_num:.1f} mi).")
-            else:
                 score -= 35
-                flags.append(f"Too far from target POI ({distance_num:.1f} mi).")
-        except Exception:
-            pass
+                flags.append("Weaker fit versus named target area.")
 
-        # 4. Media format fit
+        distance_num = _to_float(row.get("distance_to_poi_miles"))
+
+        if distance_num is not None:
+            radius = _to_float(requested_radius)
+
+            if radius:
+                if distance_num <= radius:
+                    score += 55
+                    reasons.append(f"Within requested radius of target POI ({distance_num:.1f} mi).")
+                elif distance_num <= radius + 5:
+                    score += 25
+                    flags.append(f"Slightly outside requested radius but still nearby ({distance_num:.1f} mi).")
+                elif distance_num <= radius + 15:
+                    score += 5
+                    flags.append(f"Outside requested radius but may work as a market support board ({distance_num:.1f} mi).")
+                else:
+                    score -= 40
+                    flags.append(f"Far outside requested radius ({distance_num:.1f} mi).")
+            else:
+                if distance_num <= 5:
+                    score += 40
+                    reasons.append(f"Very close to target POI ({distance_num:.1f} mi).")
+                elif distance_num <= 10:
+                    score += 30
+                    reasons.append(f"Close to target POI ({distance_num:.1f} mi).")
+                elif distance_num <= 20:
+                    score += 10
+                    flags.append(f"Moderate POI distance ({distance_num:.1f} mi).")
+                else:
+                    score -= 15
+                    flags.append(f"Farther from target POI ({distance_num:.1f} mi).")
+
         if requested_media_types:
             requested_text = " ".join(requested_media_types)
 
             if any(req in media_type or media_type in req for req in requested_media_types):
-                score += 20
+                score += 35
                 reasons.append("Matches requested media format.")
             elif "digital bulletin" in requested_text and "digital" in media_type and "bulletin" in media_type:
-                score += 20
+                score += 35
                 reasons.append("Matches requested digital bulletin format.")
             elif "bulletin" in requested_text and "bulletin" in media_type:
-                score += 5
+                score += 15
                 flags.append("Bulletin format is relevant, but not exact requested format.")
             else:
-                score -= 15
+                score -= 25
                 flags.append("Media format is not an exact match.")
 
-        # 5. Budget fit as guidance, not exclusion
-        if max_unit_rate:
-            rate = row.get("four_week_media_cost", row.get("negotiated_rate_4wk", None))
-            try:
-                rate_num = float(rate)
-                cap = float(max_unit_rate)
+        if has_freeway_intent:
+            freeway_keywords = [
+                "i-5",
+                "5 freeway",
+                "the 5",
+                "i5",
+                "interstate 5",
+                "101",
+                "105",
+                "110",
+                "405",
+                "605",
+                "10 freeway",
+                "710",
+                "91",
+                "freeway",
+                "highway",
+            ]
 
+            matched_freeway_terms = [
+                term for term in freeway_keywords
+                if term in brief_lower and term in combined_text
+            ]
+
+            if matched_freeway_terms:
+                score += 45
+                reasons.append("Matches requested freeway or route.")
+            elif "freeway" in combined_text or "highway" in combined_text:
+                score += 20
+                flags.append("Freeway board that may support the requested route or market.")
+
+        rate_num = get_rate_value(row)
+
+        if max_unit_rate and rate_num is not None:
+            cap = _to_float(max_unit_rate)
+
+            if cap:
                 if rate_num <= cap:
-                    score += 15
+                    score += 30
                     reasons.append("Within stated budget.")
-                elif rate_num <= cap * 1.20:
-                    score += 5
-                    flags.append("Slightly over budget; worth reviewing.")
+                elif rate_num <= cap * 1.15:
+                    score += 12
+                    flags.append("Slightly over budget; worth considering due to fit.")
+                elif rate_num <= cap * 1.35:
+                    score -= 3
+                    flags.append("Over budget, but may be worth reviewing if location fit is strong.")
                 else:
-                    score -= 5
-                    flags.append("Over stated budget; include only if strategically relevant.")
-            except Exception:
-                flags.append("Missing rate; review budget manually.")
+                    score -= 18
+                    flags.append("Well over stated budget; planner review recommended.")
+        elif max_unit_rate and rate_num is None:
+            flags.append("Missing rate; review budget manually.")
 
-        # 6. Strategic context
         strategic_terms = []
-        if "world cup" in brief_lower:
-            strategic_terms += ["stadium", "sports", "event", "freeway", "airport", "traffic"]
+
+        if "world cup" in brief_lower or " wc" in brief_lower:
+            strategic_terms += [
+                "stadium",
+                "sports",
+                "event",
+                "freeway",
+                "airport",
+                "traffic",
+                "downtown",
+            ]
+
+        if "stadium" in brief_lower:
+            strategic_terms += [
+                "stadium",
+                "sports",
+                "event",
+                "freeway",
+                "traffic",
+            ]
+
         if "golf" in brief_lower:
-            strategic_terms += ["golf", "sports", "affluent", "coastal"]
+            strategic_terms += [
+                "golf",
+                "sports",
+                "affluent",
+                "coastal",
+            ]
 
         if strategic_terms and any(term in combined_text for term in strategic_terms):
-            score += 8
+            score += 12
             reasons.append("Strategic context aligns with brief.")
+
+        if score >= 120:
+            tier = "Best Match"
+        elif score >= 80:
+            tier = "Strong Match"
+        elif score >= 35:
+            tier = "Strategic Alternate"
+        else:
+            tier = "Planner Review"
 
         if not reasons:
             reasons.append("Possible alternate; review strategic fit.")
@@ -530,6 +778,7 @@ def score_proposal_candidates(
         return pd.Series(
             {
                 "proposal_score": score,
+                "recommendation_tier": tier,
                 "selection_reason": " ".join(dict.fromkeys(reasons)),
                 "review_flags": " | ".join(dict.fromkeys(flags)),
             }
@@ -537,70 +786,76 @@ def score_proposal_candidates(
 
     scored = df.apply(score_row, axis=1)
     df["proposal_score"] = scored["proposal_score"]
+    df["recommendation_tier"] = scored["recommendation_tier"]
     df["selection_reason"] = scored["selection_reason"]
     df["review_flags"] = scored["review_flags"]
 
-    # Very specific target logic. Do not backfill these with broad LA.
-    if "sofi" in target_profiles:
-        sofi_units = df[df["unit_id_clean"].isin({"40575", "40576"})].copy()
-        if not sofi_units.empty:
-            return sofi_units.sort_values("proposal_score", ascending=False)
+    if requested_markets or requested_cities:
+        def is_inside_requested_geo(row: pd.Series) -> bool:
+            market = _clean_text(row.get("market"))
+            city = _clean_text(row.get("city"))
+            description = _clean_text(row.get("description"))
+            location = _clean_text(row.get("location"))
+            comments = _clean_text(row.get("comments"))
+            combined = " ".join([market, city, description, location, comments])
 
-    if "dtla" in target_profiles:
-        dtla_units = df[df["unit_id_clean"].isin({"10126", "0103", "103"})].copy()
-        if not dtla_units.empty:
-            return dtla_units.sort_values("proposal_score", ascending=False)
+            if requested_markets and any(m in combined for m in requested_markets):
+                return True
 
-    is_specific_poi_request = bool(
-        target_profiles
-        or requirements.get("poi_requirements")
-        or any(term in brief_lower for term in ["stadium", "sofi", "dtla", "downtown", "levi"])
-    )
+            if requested_cities and any(c in combined for c in requested_cities):
+                return True
 
-    if is_specific_poi_request:
-        def is_reasonable_specific_candidate(row: pd.Series) -> bool:
-            try:
-                score = float(row.get("proposal_score", 0))
-            except Exception:
-                score = 0
+            if "sofi" in target_profiles and "los angeles" in combined:
+                return True
 
-            distance = row.get("distance_to_poi_miles")
-            try:
-                distance_num = float(distance)
-                if distance_num <= 10:
-                    return score >= 20
-                if distance_num <= 15:
-                    return score >= 35
-                return False
-            except Exception:
-                return score >= 60
+            if "dtla" in target_profiles and "los angeles" in combined:
+                return True
 
-        plausible = df[df.apply(is_reasonable_specific_candidate, axis=1)].copy()
+            if "san_francisco" in target_profiles and any(
+                x in combined for x in ["san francisco", "santa clara", "oakland", "san mateo"]
+            ):
+                return True
 
-        if plausible.empty:
-            plausible = df.sort_values("proposal_score", ascending=False).head(3).copy()
-            plausible["review_flags"] = plausible["review_flags"].fillna("").astype(str)
-            plausible["review_flags"] = (
-                plausible["review_flags"]
-                + " | Fallback review candidate because no strong POI/location matches were found."
-            )
+            return False
 
-        return plausible.sort_values("proposal_score", ascending=False).head(6)
+        geo_df = df[df.apply(is_inside_requested_geo, axis=1)].copy()
 
-    # Broader market/city requests can return more options, but still need to be plausible.
-    plausible = df[df["proposal_score"] >= 25].copy()
+        if not geo_df.empty:
+            df = geo_df
 
-    if plausible.empty:
-        plausible = df.sort_values("proposal_score", ascending=False).head(5).copy()
-        plausible["review_flags"] = plausible["review_flags"].fillna("").astype(str)
-        plausible["review_flags"] = (
-            plausible["review_flags"]
-            + " | Fallback review candidate because no strong matches were found."
+    if requested_unit_ids:
+        known_df = df[df["unit_id_clean"].isin(requested_unit_ids)].copy()
+    else:
+        known_df = df.iloc[0:0].copy()
+
+    best_df = df[df["proposal_score"] >= 80].copy()
+
+    alternate_df = df[
+        (df["proposal_score"] >= 20)
+        & (~df.index.isin(best_df.index))
+    ].copy()
+
+    if has_poi_or_distance_intent:
+        selected = pd.concat([known_df, best_df, alternate_df], axis=0)
+    else:
+        selected = pd.concat([known_df, best_df], axis=0)
+
+    selected = selected[~selected.index.duplicated(keep="first")].copy()
+    selected = selected.sort_values("proposal_score", ascending=False)
+
+    if selected.empty:
+        fallback = df.sort_values("proposal_score", ascending=False).head(min(requested_count, 10)).copy()
+        fallback["review_flags"] = fallback["review_flags"].fillna("").astype(str)
+        fallback["review_flags"] = (
+            fallback["review_flags"]
+            + " | Fallback recommendation because no perfect matches were found."
         )
+        selected = fallback
 
-    plausible = plausible.sort_values("proposal_score", ascending=False)
-    requested_count = int(requirements.get("number_of_units") or 25)
-    return plausible.head(requested_count)
+    if has_poi_or_distance_intent:
+        return selected.head(max(requested_count, 10))
+
+    return selected.head(requested_count)
 
 
 # -----------------------------
@@ -609,15 +864,11 @@ def score_proposal_candidates(
 
 st.set_page_config(page_title="RFP Grid Agent", layout="wide")
 
-# Keeps file uploaders and text areas fresh when starting a new RFP.
 if "reset_counter" not in st.session_state:
     st.session_state["reset_counter"] = 0
 
 
 def start_new_rfp() -> None:
-    """
-    Clears the current RFP submission and restarts the app with fresh widgets.
-    """
     st.session_state["reset_counter"] += 1
     current_counter = st.session_state["reset_counter"]
 
@@ -708,13 +959,17 @@ if requirements_key not in st.session_state:
     st.session_state[requirements_key] = json.dumps(default_requirements(), indent=2)
 
 if st.button("Extract requirements from brief", key=f"extract_requirements_{reset_key}"):
-    req = extract_requirements(
-        brief_text,
-        use_ai=use_ai,
-        groq_model=groq_model,
-    )
-    req = apply_target_profiles(req, brief_text)
-    st.session_state[requirements_key] = json.dumps(req, indent=2)
+    if not brief_text.strip():
+        st.error("Please paste or upload the RFP brief first.")
+    else:
+        req = extract_requirements(
+            brief_text,
+            use_ai=use_ai,
+            groq_model=groq_model,
+        )
+        req = apply_target_profiles(req, brief_text)
+        st.session_state[requirements_key] = json.dumps(req, indent=2)
+        st.success("Requirements extracted. Review them below, then run the agent.")
 
 requirements_json = st.text_area(
     "Review and edit before running. For distance, include POI latitude and longitude in poi_requirements.",
@@ -729,6 +984,31 @@ if run_button:
     if master_file is None:
         st.error("Upload your master pricing workbook first.")
         st.stop()
+
+    if not brief_text.strip():
+        st.error("Please paste or upload the RFP brief before running.")
+        st.stop()
+
+    try:
+        current_requirements_check = json.loads(requirements_json)
+    except Exception:
+        current_requirements_check = {}
+
+    requirements_are_blank = not any(
+        current_requirements_check.get(field)
+        for field in ["markets", "cities", "media_types", "poi_requirements", "known_unit_ids"]
+    )
+
+    if requirements_are_blank:
+        with st.spinner("Requirements were blank, extracting from brief before running..."):
+            req = extract_requirements(
+                brief_text,
+                use_ai=use_ai,
+                groq_model=groq_model,
+            )
+            req = apply_target_profiles(req, brief_text)
+            requirements_json = json.dumps(req, indent=2)
+            st.session_state[requirements_key] = requirements_json
 
     try:
         raw_requirements = json.loads(requirements_json)
@@ -759,6 +1039,15 @@ if run_button:
             column_aliases_path=CONFIG_DIR / "column_aliases.json",
         )
         inventory = load_result.inventory
+
+        st.info(f"Loaded {len(inventory)} inventory rows from the master workbook.")
+
+        if inventory.empty:
+            st.error(
+                "The master pricing workbook loaded 0 inventory rows. "
+                "Please confirm the correct sheet/tab is being read."
+            )
+            st.stop()
 
     with st.spinner("Calculating distances if POI lat/long is provided..."):
         poi = get_primary_poi(requirements)
@@ -800,6 +1089,7 @@ if run_button:
                 "availability",
                 "description",
                 "proposal_score",
+                "recommendation_tier",
                 "score",
                 "four_week_media_cost",
                 "install_cost_final",
@@ -852,4 +1142,3 @@ if run_button:
 
     with st.expander("Missing fields report"):
         st.dataframe(load_result.missing_fields, use_container_width=True)
-
