@@ -215,23 +215,6 @@ MEMORY_COLUMNS = [
 ]
 
 
-def load_planner_memory(memory_file) -> pd.DataFrame:
-    if memory_file is None:
-        return pd.DataFrame(columns=MEMORY_COLUMNS)
-
-    try:
-        memory = pd.read_csv(memory_file)
-    except Exception:
-        return pd.DataFrame(columns=MEMORY_COLUMNS)
-
-    for col in MEMORY_COLUMNS:
-        if col not in memory.columns:
-            memory[col] = ""
-
-    memory["unit_id_clean"] = memory["unit_id"].apply(_clean_unit_id)
-    return memory
-
-
 def get_rfp_tags(requirements: dict[str, Any], brief_text: str) -> list[str]:
     brief_lower = _clean_text(brief_text)
     tags = []
@@ -378,6 +361,10 @@ def build_memory_rows(
 
     return pd.DataFrame(rows, columns=MEMORY_COLUMNS)
 
+
+# -----------------------------
+# Market, POI, and profile knowledge
+# -----------------------------
 
 TARGET_HINTS = {
     "sofi": {
@@ -1085,12 +1072,6 @@ with st.sidebar:
         key=f"brief_file_{reset_key}",
     )
 
-    planner_memory_file = st.file_uploader(
-        "4. Optional planner memory CSV",
-        type=["csv"],
-        key=f"planner_memory_file_{reset_key}",
-    )
-
     use_ai = st.checkbox(
         "Use free cloud AI to read brief",
         value=True,
@@ -1166,10 +1147,8 @@ if run_button:
         st.error("Please paste or upload the RFP brief before running.")
         st.stop()
 
-    planner_memory = load_planner_memory(planner_memory_file)
-
-    if planner_memory_file is not None:
-        st.info(f"Loaded {len(planner_memory)} planner memory rows.")
+    planner_memory = load_planner_memory_from_db()
+    st.info(f"Loaded {len(planner_memory)} planner memory rows from database.")
 
     try:
         current_requirements_check = json.loads(requirements_json)
@@ -1279,7 +1258,6 @@ if run_button:
     st.session_state[f"last_selected_{reset_key}"] = selected
     st.session_state[f"last_requirements_{reset_key}"] = requirements
     st.session_state[f"last_brief_text_{reset_key}"] = brief_text
-    st.session_state[f"last_planner_memory_{reset_key}"] = planner_memory
 
     if not selected.empty:
         preview_cols = [
@@ -1355,18 +1333,16 @@ if run_button:
 last_selected_key = f"last_selected_{reset_key}"
 last_requirements_key = f"last_requirements_{reset_key}"
 last_brief_key = f"last_brief_text_{reset_key}"
-last_memory_key = f"last_planner_memory_{reset_key}"
 
 if last_selected_key in st.session_state:
     selected_for_memory = st.session_state[last_selected_key]
     requirements_for_memory = st.session_state[last_requirements_key]
     brief_for_memory = st.session_state[last_brief_key]
-    existing_memory = st.session_state.get(last_memory_key, pd.DataFrame(columns=MEMORY_COLUMNS))
 
     with st.expander("Teach the agent from this RFP"):
         st.write(
             "Mark which units you would actually keep or remove. "
-            "Then download the updated planner memory CSV and upload it on future RFPs."
+            "Then save your feedback so the agent remembers it for future RFPs."
         )
 
         unit_options = [
@@ -1401,7 +1377,7 @@ if last_selected_key in st.session_state:
             key=f"memory_notes_{reset_key}",
         )
 
-        if st.button("Create updated planner memory CSV", key=f"create_memory_{reset_key}"):
+        if st.button("Save planner feedback", key=f"save_memory_{reset_key}"):
             new_memory_rows = build_memory_rows(
                 selected_df=selected_for_memory,
                 requirements=requirements_for_memory,
@@ -1412,23 +1388,8 @@ if last_selected_key in st.session_state:
                 notes=memory_notes,
             )
 
-            updated_memory = pd.concat(
-                [existing_memory[MEMORY_COLUMNS], new_memory_rows],
-                ignore_index=True,
-            )
+            rows_to_save = new_memory_rows.to_dict(orient="records")
+            saved = save_planner_memory_to_db(rows_to_save)
 
-            st.session_state[f"updated_memory_{reset_key}"] = updated_memory
-            st.success("Planner memory updated. Download it below and use it on your next RFP.")
-
-        updated_memory_key = f"updated_memory_{reset_key}"
-
-        if updated_memory_key in st.session_state:
-            updated_memory = st.session_state[updated_memory_key]
-
-            st.download_button(
-                label="Download updated planner memory CSV",
-                data=updated_memory.to_csv(index=False).encode("utf-8"),
-                file_name="planner_memory.csv",
-                mime="text/csv",
-                key=f"download_memory_{reset_key}",
-            )
+            if saved:
+                st.success("Planner feedback saved. The agent will remember this on future RFPs.")
