@@ -608,21 +608,81 @@ def score_proposal_candidates(
 # -----------------------------
 
 st.set_page_config(page_title="RFP Grid Agent", layout="wide")
+
+# Keeps file uploaders and text areas fresh when starting a new RFP.
+if "reset_counter" not in st.session_state:
+    st.session_state["reset_counter"] = 0
+
+
+def start_new_rfp() -> None:
+    """
+    Clears the current RFP submission and restarts the app with fresh widgets.
+    """
+    st.session_state["reset_counter"] += 1
+    current_counter = st.session_state["reset_counter"]
+
+    for key in list(st.session_state.keys()):
+        if key != "reset_counter":
+            del st.session_state[key]
+
+    st.session_state["reset_counter"] = current_counter
+    st.rerun()
+
+
 st.title("RFP Grid Agent")
 st.caption(
     "Reads your master pricing workbook, matches boards to an RFP brief, "
     "calculates pricing, and exports a filled grid with audit tabs."
 )
 
+reset_key = st.session_state["reset_counter"]
+
 with st.sidebar:
     st.header("Inputs")
-    master_file = st.file_uploader("1. Upload master pricing workbook", type=["xlsx"])
-    template_file = st.file_uploader("2. Optional blank agency grid", type=["xlsx", "xlsm"])
-    brief_file = st.file_uploader("3. Optional RFP brief", type=["txt", "pdf"])
-    use_ai = st.checkbox("Use free cloud AI to read brief", value=True)
-    groq_model = st.text_input("Groq model", value="llama-3.1-8b-instant")
+
+    if st.button("Start New RFP", type="secondary", use_container_width=True):
+        start_new_rfp()
+
     st.divider()
-    run_button = st.button("Run RFP Agent", type="primary")
+
+    master_file = st.file_uploader(
+        "1. Upload master pricing workbook",
+        type=["xlsx"],
+        key=f"master_file_{reset_key}",
+    )
+
+    template_file = st.file_uploader(
+        "2. Optional blank agency grid",
+        type=["xlsx", "xlsm"],
+        key=f"template_file_{reset_key}",
+    )
+
+    brief_file = st.file_uploader(
+        "3. Optional RFP brief",
+        type=["txt", "pdf"],
+        key=f"brief_file_{reset_key}",
+    )
+
+    use_ai = st.checkbox(
+        "Use free cloud AI to read brief",
+        value=True,
+        key=f"use_ai_{reset_key}",
+    )
+
+    groq_model = st.text_input(
+        "Groq model",
+        value="llama-3.1-8b-instant",
+        key=f"groq_model_{reset_key}",
+    )
+
+    st.divider()
+
+    run_button = st.button(
+        "Run RFP Agent",
+        type="primary",
+        use_container_width=True,
+        key=f"run_button_{reset_key}",
+    )
 
 st.subheader("Brief text")
 brief_text = ""
@@ -633,29 +693,37 @@ if brief_file is not None:
     else:
         brief_text = brief_file.getvalue().decode("utf-8", errors="ignore")
 
-brief_text = st.text_area("Paste or edit RFP brief text", value=brief_text, height=180)
+brief_text = st.text_area(
+    "Paste or edit RFP brief text",
+    value=brief_text,
+    height=180,
+    key=f"brief_text_{reset_key}",
+)
 
 st.subheader("Requirements JSON")
 
-if "requirements_json" not in st.session_state:
-    st.session_state["requirements_json"] = json.dumps(default_requirements(), indent=2)
+requirements_key = f"requirements_json_{reset_key}"
 
-if st.button("Extract requirements from brief"):
+if requirements_key not in st.session_state:
+    st.session_state[requirements_key] = json.dumps(default_requirements(), indent=2)
+
+if st.button("Extract requirements from brief", key=f"extract_requirements_{reset_key}"):
     req = extract_requirements(
         brief_text,
         use_ai=use_ai,
         groq_model=groq_model,
     )
     req = apply_target_profiles(req, brief_text)
-    st.session_state["requirements_json"] = json.dumps(req, indent=2)
+    st.session_state[requirements_key] = json.dumps(req, indent=2)
 
 requirements_json = st.text_area(
     "Review and edit before running. For distance, include POI latitude and longitude in poi_requirements.",
-    value=st.session_state["requirements_json"],
+    value=st.session_state[requirements_key],
     height=360,
+    key=f"requirements_area_{reset_key}",
 )
 
-st.session_state["requirements_json"] = requirements_json
+st.session_state[requirements_key] = requirements_json
 
 if run_button:
     if master_file is None:
@@ -779,6 +847,7 @@ if run_button:
         data=output_path.read_bytes(),
         file_name=output_filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"download_button_{reset_key}",
     )
 
     with st.expander("Missing fields report"):
